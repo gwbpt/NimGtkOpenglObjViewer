@@ -1,0 +1,106 @@
+#version 330 core
+
+// Interpolated values from the vertex shaders
+in vec3 Position_worldspace;
+in vec3 Normal_cameraspace;
+in vec3 EyeDirection_cameraspace;
+in vec3 LightDirection_cameraspace;
+in vec2 UV;
+//in float texIdx;
+//in vec4 color;
+
+// Ouput data
+//out vec4 out_rgba; // idem gl_FragColor
+
+// Values that stay constant for the whole mesh.
+uniform sampler2D texture0;
+uniform sampler2D texture1;
+// uniform sampler2D texture2;
+// uniform sampler2D texture3;
+// uniform sampler2D texture4;
+// uniform sampler2D texture5;
+uniform mat4 MV;
+uniform vec3 LightPosition_worldspace;
+uniform vec4 rgbaMask;
+uniform bool useTextures;
+//uniform ivec3 toto3;
+
+void main(){
+
+	// Light emission properties
+	// You probably want to put them as uniforms
+	vec4 LightColor = vec4(1,1,1,1);
+	float LightPower = 25.0f;
+
+
+  vec4 black  = vec4(0.0, 0.0, 0.0, 1.0);
+  vec4 red    = vec4(1.0, 0.0, 0.0, 1.0);
+  vec4 green  = vec4(0.0, 1.0, 0.0, 1.0);
+  vec4 blue   = vec4(0.0, 0.0, 1.0, 1.0);
+  vec4 yellow = vec4(1.0, 1.0, 0.0, 1.0);
+  vec4 gbCoul = vec4(0.0, 1.0, 1.0, 1.0);
+  vec4 rbCoul = vec4(1.0, 0.0, 1.0, 1.0);
+  vec4 white  = vec4(1.0, 1.0, 1.0, 1.0);
+  vec4 pink   = vec4(0.9, 0.6, 0.5, 0.5);
+
+	// Material properties
+	vec4 MaterialDiffuseColor;
+
+  /*
+  int idx = 0;
+  if (toto3[0]==0) idx = int(texIdx + 0.5);
+  else             idx = toto3[0] ;
+
+  if      (idx == 0) MaterialDiffuseColor = red ;
+  else if (idx == 1) MaterialDiffuseColor = texture2D(texture0, UV).rgb;
+  else if (idx == 2) MaterialDiffuseColor = texture2D(texture1, UV).rgb;
+  else if (idx == 3) MaterialDiffuseColor = texture2D(texture2, UV).rgb;
+  else if (idx == 4) MaterialDiffuseColor = texture2D(texture3, UV).rgb;
+  else if (idx == 5) MaterialDiffuseColor = texture2D(texture4, UV).rgb;
+  else if (idx == 6) MaterialDiffuseColor = texture2D(texture5, UV).rgb;
+  else               MaterialDiffuseColor = white ;
+  */
+  // vec2 UVflipV = vec2(UV[0], 1.0-UV[1]); // to flipV vertically the texture
+  if (useTextures) MaterialDiffuseColor = texture2D(texture0, UV);
+  else             MaterialDiffuseColor = pink;
+
+  if(MaterialDiffuseColor.a < 0.1) // alpha threshold for tranparency
+        discard;
+
+	vec4 MaterialAmbientColor  = vec4(0.2, 0.2, 0.2, 1.0) * MaterialDiffuseColor; // 0.2, 0.2, 0.2 Diffuse : "color" of the object
+	vec4 MaterialSpecularColor = vec4(0.1, 0.1, 0.1, 1.0); // 0.1, 0.1, 0.1 Specular: reflective, like a mirror
+
+	// Distance to the light
+	float distance = length(LightPosition_worldspace - Position_worldspace);
+
+	// Normal of the computed fragment, in camera space
+	vec3 n = normalize( Normal_cameraspace );
+	// Direction of the light (from the fragment to the light)
+	vec3 l = normalize( LightDirection_cameraspace );
+	// Cosine of the angle between the normal and the light direction,
+	// clamped above 0
+	//  - light is at the vertical of the triangle -> 1
+	//  - light is perpendicular to the triangle -> 0
+	//  - light is behind the triangle -> 0
+	float cosTheta = clamp( dot( n,l ), 0,1 );
+
+	// Eye vector (towards the camera)
+	vec3 E = normalize(EyeDirection_cameraspace);
+	// Direction in which the triangle reflects the light
+	vec3 R = reflect(-l,n);
+	// Cosine of the angle between the Eye vector and the Reflect vector,
+	// clamped to 0
+	//  - Looking into the reflection -> 1
+	//  - Looking elsewhere -> < 1
+	float cosAlpha = clamp( dot( E,R ), 0,1 );
+
+	vec4 color4 = MaterialAmbientColor  + // Ambient : simulates indirect lighting
+		            MaterialDiffuseColor  * LightColor * LightPower * cosTheta        / (distance*distance) +
+		            MaterialSpecularColor * LightColor * LightPower * pow(cosAlpha,5) / (distance*distance);
+
+  vec4 colorMasked4 = color4 * rgbaMask;
+
+  //if(colorMasked4.a < 0.1) discard;// alpha threshold for tranparency
+
+  gl_FragColor = color4 ;
+}

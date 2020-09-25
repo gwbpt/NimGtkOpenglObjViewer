@@ -1,0 +1,6 @@
+# exclude executables
+commonTypes
+gtkOpenglObjVisu
+objLoaderMtl
+objModels
+
