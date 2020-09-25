@@ -497,6 +497,9 @@ proc on_createContext(self: MyGLArea): uInt64 =
 proc on_unrealize(self: MyGLArea) =
     echo "MyGLArea.on_unrealize"
 
+proc bufSiz[T](buf: seq[T]): int     {.inline.} = result = buf.len * T.sizeof
+proc bufAdr[T](buf: seq[T]): pointer {.inline.} = result = buf[0].unsafeaddr
+
 proc addTexFileToLoad(texFile: string): int =
     if parms.texFilesToLoad.contains(texFile): result = parms.texFilesToLoad[texFile]
     else:
@@ -547,6 +550,21 @@ proc on_realize(self: MyGLArea) =
     NGL.glLinkProgram(objGL.progId)
 
     const vectorDim: GLint = 3 # 2D or 3D
+
+    # proc glGenBuffers(n: GLsizei, buffers: ptr GLuint)
+    glGenVertexArrays(1, objGL.mesh.vao.addr)
+
+    # create OpenGl buffer and fill it with objGL.bufs.idx (index of vertices)
+    glGenBuffers(1, objGL.mesh.ebo.addr)
+
+    # create OpenGl buffer and fill it with objGL.bufs.ver
+    glGenBuffers(1, objGL.mesh.vbo.addr)
+
+    # create OpenGl buffer and fill it with objGL.bufs.nor
+    glGenBuffers(1, objGL.mesh.norm.addr)
+
+    # create OpenGl buffer and fill it with objGL.bufs.uvt
+    glGenBuffers(1, objGL.mesh.uvt.addr)
 
     block:
         let model = parms.model
@@ -652,44 +670,27 @@ proc on_realize(self: MyGLArea) =
         objGL.textureLoc0 = glGetUniformLocation(objGL.progId, "texture0")
         #echo "Got handle for uniform texture0: ", objGL.textureLoc0
 
-    #var mesh: Mesh
+        glBindVertexArray(objGL.mesh.vao)
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
 
-    # proc glGenBuffers(n: GLsizei, buffers: ptr GLuint)
-    glGenVertexArrays(1, objGL.mesh.vao.addr)
-    glBindVertexArray(objGL.mesh.vao)
-    glBindBuffer(GL_ARRAY_BUFFER, 0)
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, objGL.mesh.ebo)
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, objGL.bufs.idx.bufSiz, objGL.bufs.idx.bufAdr, GL_STATIC_DRAW)
 
-    proc bufSiz[T](buf: seq[T]): int     {.inline.} = result = buf.len * T.sizeof
-    proc bufAdr[T](buf: seq[T]): pointer {.inline.} = result = buf[0].unsafeaddr
+        glBindBuffer(GL_ARRAY_BUFFER, objGL.mesh.vbo)
+        glBufferData(GL_ARRAY_BUFFER, objGL.bufs.ver.bufSiz, objGL.bufs.ver.bufAdr, GL_STATIC_DRAW)
 
-    # create OpenGl buffer and fill it with objGL.bufs.idx (index of vertices)
-    glGenBuffers(1, objGL.mesh.ebo.addr)
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, objGL.mesh.ebo)
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, objGL.bufs.idx.bufSiz, objGL.bufs.idx.bufAdr, GL_STATIC_DRAW)
+        if isNormalBuf:
+            glBindBuffer(GL_ARRAY_BUFFER, objGL.mesh.norm)
+            glBufferData(GL_ARRAY_BUFFER, objGL.bufs.nor.bufSiz, objGL.bufs.nor.bufAdr, GL_STATIC_DRAW)
 
-    # create OpenGl buffer and fill it with objGL.bufs.ver
-    glGenBuffers(1, objGL.mesh.vbo.addr)
-    glBindBuffer(GL_ARRAY_BUFFER, objGL.mesh.vbo)
-    glBufferData(GL_ARRAY_BUFFER, objGL.bufs.ver.bufSiz, objGL.bufs.ver.bufAdr, GL_STATIC_DRAW)
+        if is_uv_buf:
+            glBindBuffer(GL_ARRAY_BUFFER, objGL.mesh.uvt)
+            glBufferData(GL_ARRAY_BUFFER, objGL.bufs.uvt.bufSiz, objGL.bufs.uvt.bufAdr, GL_STATIC_DRAW)
 
-    if isNormalBuf:
-        # create OpenGl buffer and fill it with objGL.bufs.nor
-        glGenBuffers(1, objGL.mesh.norm.addr)
-        glBindBuffer(GL_ARRAY_BUFFER, objGL.mesh.norm)
-        glBufferData(GL_ARRAY_BUFFER, objGL.bufs.nor.bufSiz, objGL.bufs.nor.bufAdr, GL_STATIC_DRAW)
-
-    if is_uv_buf:
-        # create OpenGl buffer and fill it with objGL.bufs.uvt
-        glGenBuffers(1, objGL.mesh.uvt.addr)
-        glBindBuffer(GL_ARRAY_BUFFER, objGL.mesh.uvt)
-        glBufferData(GL_ARRAY_BUFFER, objGL.bufs.uvt.bufSiz, objGL.bufs.uvt.bufAdr, GL_STATIC_DRAW)
-
-    #objGL.mesh = mesh
-
-    # 1rst attribute buffer : vertices
-    glEnableVertexAttribArray(0)
-    glVertexAttribPointer(0'u32, vectorDim, EGL_FLOAT, false, float32.sizeof * vectorDim, nil)
-    glBindBuffer(GL_ARRAY_BUFFER, 0)
+        # 1rst attribute buffer : vertices
+        glEnableVertexAttribArray(0)
+        glVertexAttribPointer(0'u32, vectorDim, EGL_FLOAT, false, float32.sizeof * vectorDim, nil)
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
 
     glUseProgram(objGL.progId)
 
