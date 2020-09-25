@@ -369,7 +369,7 @@ from objModels import `$`
 
 let t0 : float = epochTime()
 
-import tables # also exist gtk.Table: Table
+import tables # also exist gtk.Table: Table !
 
 # this declaration dont fit !:
 # type KeyCode2NameActionTable = tables.Table[system.int, tuple[name: string, fct: proc (self: Obj3D, idx: int, i: int){.gcsafe, locks: 0.}, obj: Obj3D, idx: int, d:int]]
@@ -548,140 +548,143 @@ proc on_realize(self: MyGLArea) =
 
     const vectorDim: GLint = 3 # 2D or 3D
 
-    let model = parms.model
-    if not self.prepareBufs(flipV=true, swapVertYZ=model.swapYZ, swapNormYZ=model.swapYZ, debugTextureFile=parms.debugTextureFile):
-        echo "Cannot load model: ", parms. model.name
+    block:
+        let model = parms.model
+        if not self.prepareBufs(flipV=true, swapVertYZ=model.swapYZ, swapNormYZ=model.swapYZ, debugTextureFile=parms.debugTextureFile):
+            echo "Cannot load model: ", parms. model.name
 
-    let obj3d = new Obj3D
-    obj3d.name = model.name
-    parms.obj3Ds.add(obj3d)
+        let obj3d = new Obj3D
+        obj3d.name = model.name
 
-    #[
-    GrpRange* = object
-        name* : string
-        mtl*  : string
-        idx0*, idx1*: Idx
+        #[
+        GrpRange* = object
+            name* : string
+            mtl*  : string
+            idx0*, idx1*: Idx
 
-        mtlName : string
-        texturIdxs : OrderedSet[int]
-        idx0*, idx1*: OBJL.Idx
-    ]#
-    echo "***************** finding texFilesToLoad in rgMtls: ", $objGL.bufs.rgMtls
-    for rgMtl in objGL.bufs.rgMtls:
-        let child = new Obj3d
-        child.name    = rgMtl.name
-        child.idx0    = rgMtl.idx0
-        child.idx1    = rgMtl.idx1
-        child.mtlName = rgMtl.mtl
-        obj3d.children.add(child)
+            mtlName : string
+            texturIdxs : OrderedSet[int]
+            idx0*, idx1*: OBJL.Idx
+        ]#
+        echo "***************** finding texFilesToLoad in rgMtls: ", $objGL.bufs.rgMtls
+        for rgMtl in objGL.bufs.rgMtls:
+            let child = new Obj3d
+            child.name    = rgMtl.name
+            child.idx0    = rgMtl.idx0
+            child.idx1    = rgMtl.idx1
+            child.mtlName = rgMtl.mtl
+            obj3d.children.add(child)
 
-        parms.obj3dSel = obj3d # select the last created
+            parms.obj3dSel = obj3d # select the last created
 
-        if objGL.matTplLib != nil and objGL.matTplLib.mtls.contains(child.mtlName) :
-            child.mtl = objGL.matTplLib.mtls[child.mtlName]
-            echo "child.mtl: ", $child.mtl
-            if child.mtl.mapKa.len > 0: child.mapKaId = addTexFileToLoad(child.mtl.mapKa)
-            if child.mtl.mapKd.len > 0: child.mapKdId = addTexFileToLoad(child.mtl.mapKd)
-            if child.mtl.mapKs.len > 0: child.mapKsId = addTexFileToLoad(child.mtl.mapKs)
-    echo ">>>>>>>>>>> obj3Ds: "
-    for o in parms.obj3Ds:
-        echo o.childrenToStr & " : mtl: " & $o.mtl
+            if objGL.matTplLib != nil and objGL.matTplLib.mtls.contains(child.mtlName) :
+                child.mtl = objGL.matTplLib.mtls[child.mtlName]
+                echo "child.mtl: ", $child.mtl
+                if child.mtl.mapKa.len > 0: child.mapKaId = addTexFileToLoad(child.mtl.mapKa)
+                if child.mtl.mapKd.len > 0: child.mapKdId = addTexFileToLoad(child.mtl.mapKd)
+                if child.mtl.mapKs.len > 0: child.mapKsId = addTexFileToLoad(child.mtl.mapKs)
 
-    echo "**** texFilesToLoad: ", parms.texFilesToLoad
+        parms.obj3Ds.add(obj3d)
 
-    if false:
-        echo fmt"objGL.bufs.idx: len:{objGL.bufs.idx.len:6}, sizeof:{objGL.bufs.idx.sizeof}"
-        echo fmt"objGL.bufs.ver: len:{objGL.bufs.ver.len:6}, sizeof:{objGL.bufs.ver.sizeof}"
-        echo fmt"objGL.bufs.nor: len:{objGL.bufs.nor.len:6}, sizeof:{objGL.bufs.nor.sizeof}"
-        echo fmt"objGL.bufs.uvt: len:{objGL.bufs.uvt.len:6}, sizeof:{objGL.bufs.uvt.sizeof}"
+        echo ">>>>>>>>>>> obj3Ds: "
+        for o in parms.obj3Ds:
+            echo o.childrenToStr & " : mtl: " & $o.mtl
 
-    #objGL.grps_range = rangMtlNames.rangs
-    #texFilesToLoad   = rangMtlNames.txfis
+        echo "**** texFilesToLoad: ", parms.texFilesToLoad
 
-    assert objGL.bufs.ver.len.mod(3) == 0 # 3D
-    assert objGL.bufs.nor.len.mod(3) == 0 # 3D
-    assert objGL.bufs.uvt.len.mod(2) == 0 # 2D
+        if false:
+            echo fmt"objGL.bufs.idx: len:{objGL.bufs.idx.len:6}, sizeof:{objGL.bufs.idx.sizeof}"
+            echo fmt"objGL.bufs.ver: len:{objGL.bufs.ver.len:6}, sizeof:{objGL.bufs.ver.sizeof}"
+            echo fmt"objGL.bufs.nor: len:{objGL.bufs.nor.len:6}, sizeof:{objGL.bufs.nor.sizeof}"
+            echo fmt"objGL.bufs.uvt: len:{objGL.bufs.uvt.len:6}, sizeof:{objGL.bufs.uvt.sizeof}"
 
-    objGL.nVert = objGL.bufs.ver.len.div(3)
-    objGL.nNorm = objGL.bufs.nor.len.div(3)
-    objGL.nUvts = objGL.bufs.uvt.len.div(2)
+        #objGL.grps_range = rangMtlNames.rangs
+        #texFilesToLoad   = rangMtlNames.txfis
 
-    assert objGL.bufs.idx.len.mod(3) == 0 # Triangles
+        assert objGL.bufs.ver.len.mod(3) == 0 # 3D
+        assert objGL.bufs.nor.len.mod(3) == 0 # 3D
+        assert objGL.bufs.uvt.len.mod(2) == 0 # 2D
 
-    objGL.nTriangles = objGL.bufs.idx.len.div(3)
+        objGL.nVert = objGL.bufs.ver.len.div(3)
+        objGL.nNorm = objGL.bufs.nor.len.div(3)
+        objGL.nUvts = objGL.bufs.uvt.len.div(2)
 
-    if true:
-        echo "nVert   : ", objGL.nVert
-        echo "nNorm   : ", objGL.nNorm
-        echo "nUvts   : ", objGL.nUvts
-        echo "nTriangl: ", objGL.nTriangles
+        assert objGL.bufs.idx.len.mod(3) == 0 # Triangles
 
-    let isNormalBuf = objGL.nNorm == objGL.nVert
-    let is_uv_buf   = objGL.nUvts == objGL.nVert
-    echo "normals exists: ", isNormalBuf
-    echo "uvts    exists: ", is_uv_buf
+        objGL.nTriangles = objGL.bufs.idx.len.div(3)
 
-    #echo "texFilesToLoad.len: ", texFilesToLoad.len
+        if true:
+            echo "nVert   : ", objGL.nVert
+            echo "nNorm   : ", objGL.nNorm
+            echo "nUvts   : ", objGL.nUvts
+            echo "nTriangl: ", objGL.nTriangles
 
-    #[
-    parms.nObjToDisplay = objGL.grps_range.len
-    parms.objIdxToDisplay = @[] # flags to show/hide objects
-    for obj3d in parms.subject:
-        parms.objIdxToDisplay.add(true)
-    # echo "objIdxToDisplay : ", parms.objIdxToDisplay
-    ]#
+        isNormalBuf = objGL.nNorm == objGL.nVert
+        is_uv_buf   = objGL.nUvts == objGL.nVert
+        echo "normals exists: ", isNormalBuf
+        echo "uvts    exists: ", is_uv_buf
 
-    var textureIds : seq[GLuint]
-    #var textureLocs: seq[GLint] # in fragment shader
-    if parms.texFilesToLoad.len >= 1:
-        parms.useTextures = true
-        # load textureIds
-        var i = 0
-        for texFile in parms.texFilesToLoad.keys:
-            echo fmt"loading textureFile: {texFile}"
-            if i >= 6 :
-                echo "too much texFilesToLoad: > 6 !"
-                break
-            textureIds.add(load_image(texFile, debug=1))
-            inc(i)
-        echo fmt"textureIds.len:{textureIds.len}"
-    echo ">>>>>>>>>>>>>>> useTextures: ", parms.useTextures
-    objGL.textureLoc0 = glGetUniformLocation(objGL.progId, "texture0")
-    #echo "Got handle for uniform texture0: ", objGL.textureLoc0
+        #echo "texFilesToLoad.len: ", texFilesToLoad.len
 
-    var mesh: Mesh
+        #[
+        parms.nObjToDisplay = objGL.grps_range.len
+        parms.objIdxToDisplay = @[] # flags to show/hide objects
+        for obj3d in parms.subject:
+            parms.objIdxToDisplay.add(true)
+        # echo "objIdxToDisplay : ", parms.objIdxToDisplay
+        ]#
+
+        var textureIds : seq[GLuint]
+        #var textureLocs: seq[GLint] # in fragment shader
+        if parms.texFilesToLoad.len >= 1:
+            parms.useTextures = true
+            # load textureIds
+            var i = 0
+            for texFile in parms.texFilesToLoad.keys:
+                echo fmt"loading textureFile: {texFile}"
+                if i >= 6 :
+                    echo "too much texFilesToLoad: > 6 !"
+                    break
+                textureIds.add(load_image(texFile, debug=1))
+                inc(i)
+            echo fmt"textureIds.len:{textureIds.len}"
+        echo ">>>>>>>>>>>>>>> useTextures: ", parms.useTextures
+        objGL.textureLoc0 = glGetUniformLocation(objGL.progId, "texture0")
+        #echo "Got handle for uniform texture0: ", objGL.textureLoc0
+
+    #var mesh: Mesh
 
     # proc glGenBuffers(n: GLsizei, buffers: ptr GLuint)
-    glGenVertexArrays(1, mesh.vao.addr)
-    glBindVertexArray(mesh.vao)
+    glGenVertexArrays(1, objGL.mesh.vao.addr)
+    glBindVertexArray(objGL.mesh.vao)
     glBindBuffer(GL_ARRAY_BUFFER, 0)
 
     proc bufSiz[T](buf: seq[T]): int     {.inline.} = result = buf.len * T.sizeof
     proc bufAdr[T](buf: seq[T]): pointer {.inline.} = result = buf[0].unsafeaddr
 
     # create OpenGl buffer and fill it with objGL.bufs.idx (index of vertices)
-    glGenBuffers(1, mesh.ebo.addr)
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.ebo)
+    glGenBuffers(1, objGL.mesh.ebo.addr)
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, objGL.mesh.ebo)
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, objGL.bufs.idx.bufSiz, objGL.bufs.idx.bufAdr, GL_STATIC_DRAW)
 
     # create OpenGl buffer and fill it with objGL.bufs.ver
-    glGenBuffers(1, mesh.vbo.addr)
-    glBindBuffer(GL_ARRAY_BUFFER, mesh.vbo)
+    glGenBuffers(1, objGL.mesh.vbo.addr)
+    glBindBuffer(GL_ARRAY_BUFFER, objGL.mesh.vbo)
     glBufferData(GL_ARRAY_BUFFER, objGL.bufs.ver.bufSiz, objGL.bufs.ver.bufAdr, GL_STATIC_DRAW)
 
     if isNormalBuf:
         # create OpenGl buffer and fill it with objGL.bufs.nor
-        glGenBuffers(1, mesh.norm.addr)
-        glBindBuffer(GL_ARRAY_BUFFER, mesh.norm)
+        glGenBuffers(1, objGL.mesh.norm.addr)
+        glBindBuffer(GL_ARRAY_BUFFER, objGL.mesh.norm)
         glBufferData(GL_ARRAY_BUFFER, objGL.bufs.nor.bufSiz, objGL.bufs.nor.bufAdr, GL_STATIC_DRAW)
 
     if is_uv_buf:
         # create OpenGl buffer and fill it with objGL.bufs.uvt
-        glGenBuffers(1, mesh.uvt.addr)
-        glBindBuffer(GL_ARRAY_BUFFER, mesh.uvt)
+        glGenBuffers(1, objGL.mesh.uvt.addr)
+        glBindBuffer(GL_ARRAY_BUFFER, objGL.mesh.uvt)
         glBufferData(GL_ARRAY_BUFFER, objGL.bufs.uvt.bufSiz, objGL.bufs.uvt.bufAdr, GL_STATIC_DRAW)
 
-    self.objGL.mesh = mesh
+    #objGL.mesh = mesh
 
     # 1rst attribute buffer : vertices
     glEnableVertexAttribArray(0)
@@ -726,11 +729,11 @@ proc on_realize(self: MyGLArea) =
     #var p, v, m, vp, mvp : Mat4f # ie glm.Mat4[float32]
 
     objGL.bufferAttrIdList = @[]
-    objGL.bufferAttrIdList.add(BufferParams(name: "vsPosModSpace" , bufId: mesh.vbo , nFloats: 3, dtyp: EGL_FLOAT, attrLoc: 0))
+    objGL.bufferAttrIdList.add(BufferParams(name: "vsPosModSpace" , bufId: objGL.mesh.vbo , nFloats: 3, dtyp: EGL_FLOAT, attrLoc: 0))
     if isNormalBuf:
-        objGL.bufferAttrIdList.add(BufferParams(name: "vsNormModSpace", bufId: mesh.norm, nFloats: 3, dtyp: EGL_FLOAT, attrLoc: 0))
+        objGL.bufferAttrIdList.add(BufferParams(name: "vsNormModSpace", bufId: objGL.mesh.norm, nFloats: 3, dtyp: EGL_FLOAT, attrLoc: 0))
     if is_uv_buf:
-        objGL.bufferAttrIdList.add(BufferParams(name: "vsTextureUV"   , bufId: mesh.uvt , nFloats: 2, dtyp: EGL_FLOAT, attrLoc: 0))
+        objGL.bufferAttrIdList.add(BufferParams(name: "vsTextureUV"   , bufId: objGL.mesh.uvt , nFloats: 2, dtyp: EGL_FLOAT, attrLoc: 0))
 
     for bufParams in objGL.bufferAttrIdList: # find location number from shaders
         let resp:GLint = glGetAttribLocation(objGL.progId, bufParams.name)
