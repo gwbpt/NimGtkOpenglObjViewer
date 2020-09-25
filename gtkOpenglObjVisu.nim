@@ -1,5 +1,6 @@
 
 # without gio
+# with Load Obj from menu
 
 import commonTypes
 from objLoaderMtl as OBJL import nil
