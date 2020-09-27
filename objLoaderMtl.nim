@@ -1,8 +1,10 @@
 
+# load from file
+
 import strformat
 import strutils
 
-from os import joinPath, fileExists
+from os import DirSep, joinPath, splitPath, splitFile, fileExists
 
 import ../../FLOAT16/float16
 
@@ -284,7 +286,7 @@ proc parseMaterialTmplFile(mtlPath, mtlFileName :string): MatTmplLib =
             echo "ooooooooooooooo %d textureGenerated"%textureutils.nbTextureGenerated)
             echo "resultat analyse newmtl:", newmtl)
         ]#
-    echo mtlPathFile & " -> :\p", result
+    echo fmt"read {mtlPathFile} -> :\p", result
 
 #-------------------------------------------------------------------------------
 
@@ -328,9 +330,11 @@ type
 
     ObjLoader* = ref object of RootObj
         matTplLib* : MatTmplLib
-        debugTextureFile: string
         objMgr     : ObjsManager
-        objPath, objPathFile, texPathFile : string
+        #obj3D_path : string  # to replace global Obj3D_path
+        #objPath, objPathFile, texPathFile : string
+        debugTextureFile  : string # abs path
+        absPath, objFile* : string
         debug      : int
         normalize, check, o_eq_g : bool
         ignoreObjs : seq[string]
@@ -650,6 +654,7 @@ proc `$`*(o:GroupMerged): string =
 #---------------------------------------------
 
 const jpgExt = ["png", "jpg", "jpeg"]
+# os.changeFileExt(filename, ext: string)
 
 proc textureFileExist(fileName: string): bool =
     if fileExists(fileName):
@@ -728,7 +733,7 @@ proc checkGrps(self:ObjsManager, debug=1) =
 #------------------------------- class ObjLoader ---------------------------------
 
 proc `$`*(self:ObjLoader): string =
-    return fmt"objPathFile: {self.objPathFile}, normalize:{self.normalize}, mtl:{self.matTplLib}, objMgr:{NL}   {self.objMgr}"
+    return fmt"absPath: {self.absPath}, objFile: {self.objFile}, normalize:{self.normalize}, mtl:{self.matTplLib}, objMgr:{NL}   {self.objMgr}"
 
 proc getVert(self:ObjLoader, idx: int): Vec3f =
     if idx < len(self.allVerts):
@@ -761,8 +766,7 @@ proc parse_mtlib_line(self:ObjLoader) =
             return
 
     let mtlFile = self.tokens[0]
-    let mtlPath = joinPath(Obj3D_path, self.objPath)
-    self.matTplLib = parseMaterialTmplFile(mtlPath, mtlFile)
+    self.matTplLib = parseMaterialTmplFile(self.absPath, mtlFile)
 
 proc parse_objName_line(self:ObjLoader) =
     if self.objMgr.selGrp != nil:
@@ -923,16 +927,16 @@ type
 const stateChanges: State2Cmd2States =
   {
     States.INIT  : {"mtllib": States.MTLIB , "v" : States.IN_V   , "g" : States.IN_G , "o" : States.IN_O , "vn": States.IN_VN, "end": States.END}.toTable,
-    States.IN_O  : {"v"     : States.IN_V,"usemtl":States.USEMTL , "end": States.END}.toTable,
     States.MTLIB : {"v"     : States.IN_V  , "g" : States.IN_G   , "o" : States.IN_O   , "end": States.END}.toTable,
     States.IN_V  : {"v"     : States.NoChg , "vt": States.IN_VT  , "vn": States.IN_VN, "f" : States.IN_F , "o" : States.IN_O, "end": States.END}.toTable,
     States.IN_VT : {"vt"    : States.NoChg , "vn": States.IN_VN  , "f" : States.IN_F , "g" : States.IN_G                    , "usemtl": States.USEMTL, "end": States.END}.toTable,
     States.IN_VN : {"vn"    : States.NoChg , "vt": States.IN_VT  , "v" : States.IN_V , "f" : States.IN_F , "g" : States.IN_G, "usemtl": States.USEMTL,"s" : States.IGNORE, "end": States.END}.toTable,
-    States.IN_F  : {"usemtl": States.USEMTL, "f" : States.NoChg  , "g" : States.IN_G   , "o" : States.IN_O   , "v" : States.IN_V , "l" : States.IN_L , "end": States.END}.toTable,
-    #States.IN_F  : {"usemtl": States.USEMTL, "l" : States.NoChg  , "f" : States.IN_F   , "g" : States.IN_G   , "o" : States.IN_O , "v" : States.IN_V , "end": States.END}.toTable, # !!!!!!!!!!!!!!!!!!! 2 f !!!!!!!!!!!!!!!
+    States.IN_O  : {"usemtl": States.USEMTL, "v" : States.IN_V, "end": States.END}.toTable,
     States.IN_G  : {"usemtl": States.USEMTL, "g" : States.IGNORE , "v" : States.IN_V , "f" : States.IN_F , "end": States.END}.toTable,
     States.IN_S  : {"usemtl": States.USEMTL, "s" : States.IGNORE , "f" : States.IN_F , "end": States.END}.toTable,
-    States.USEMTL: {"s"     : States.IN_S  , "g" : States.IN_G   , "f" : States.IN_F , "end": States.END}.toTable
+    States.USEMTL: {"s"     : States.IN_S  , "g" : States.IN_G   , "f" : States.IN_F , "end": States.END}.toTable,
+    States.IN_F  : {"f"     : States.NoChg , "usemtl": States.USEMTL, "g" : States.IN_G   , "o" : States.IN_O   , "v" : States.IN_V , "l" : States.IN_L , "end": States.END}.toTable,
+    States.IN_L  : {"l"     : States.NoChg , "usemtl": States.USEMTL, "f" : States.IN_F   , "g" : States.IN_G   , "o" : States.IN_O , "v" : States.IN_V , "end": States.END}.toTable,
   }.toTable
 
 #echo "stateChanges: " & NL, stateChanges
@@ -965,7 +969,7 @@ proc changeState(self:ObjLoader, newState:States) =
 
 #------------------------------------------------------
 
-proc load(self:ObjLoader; debug=1) =
+proc load(self:ObjLoader; objFileAbsPath:string; debug=1) =
     if debug >= 1: echo fmt"loading: check:{self.check}, swapVertYZ:{self.swapVertYZ}, swapNormYZ:{self.swapNormYZ}, flipU:{self.flipU}, flipV:{self.flipV}"
 
     self.debug = debug
@@ -975,9 +979,9 @@ proc load(self:ObjLoader; debug=1) =
 
     time0 = cpuTime()
 
-    if debug >= 1: echo fmt"------------- loading: rescale at +-1.0:{self.normalize}, debug:{self.debug}, file: {self.objPathFile} :" #ignoreTexture:{self.ignoreTexture}
+    if debug >= 2: echo fmt"------------- loading: rescale at +-1.0:{self.normalize}, debug:{self.debug}, file: {self.objFile} :" #ignoreTexture:{self.ignoreTexture}
     #with open(Obj3D_path & self.objPathFile,'r') as f:
-    let text: string = readFile(self.objPathFile).string
+    let text: string = readFile(objFileAbsPath).string
     let lines = splitLines(text)
     if debug >= 2: echo fmt"{lines.len} lines read"
     #let parsers = { States.MTLIB : toto }.toTable
@@ -1094,34 +1098,102 @@ proc load(self:ObjLoader; debug=1) =
 
     self.objMgr.checkGrps(debug=0)
 
-    if self.debug >= 1: echo fmt"------------- loaded: debug: {self.debug}, file: {self.objPathFile} :"
+    if self.debug >= 1: echo fmt"------------- loaded: debug: {self.debug}, file: {self.objFile} :"
     #quit() # **********************************************************
 
 proc newObjLoader*(): ObjLoader =
     # init if any
     result = new ObjLoader
 
-proc loadModel*(self: ObjLoader; model: Model; ignoreTexture=false, debugTextureFile=""; swapVertYZ=false, swapNormYZ=false; flipU=false, flipV=false, check=false, debug=1, dbgDecountReload=0): bool =
+# model    : objPath, objFile, objPathFile, texFile, texPathFile
+# ObjLoader: objPath,          objPathFile, texPathFile + obj3D_path
+
+
+#proc loadModel*(self: ObjLoader; model: Model;
+#ignoreTexture=false, debugTextureFile=""; swapVertYZ=false, swapNormYZ=false; flipU=false, flipV=false, check=false, debug=1, dbgDecountReload=0): bool =
+
+proc loadModel*(self: ObjLoader;
+                objFileAbsPath: string;
+                ignoreTexture=false,
+                debugTextureFile="",
+                swapVertYZ=false, swapNormYZ=false,
+                flipU=false, flipV=false, check=false,
+                debug=1, dbgDecountReload=0
+               ): bool =
     # Load Wavefront OBJ
-    self.objPath       = model.objPath
-    self.objPathFile   = Obj3D_path & model.objPathFile
-    if not fileExists(self.objPathFile):
-        echo fmt"ERROR '{self.objPathFile}' not found"
+    #[
+    if true:
+        self.objPath       = model.objPath
+        self.objPathFile   = Obj3D_path & model.objPathFile
+        if not fileExists(self.objPathFile):
+            echo fmt"ERROR '{self.objPathFile}' not found"
+            return false
+    ]#
+    # simulate new loadModel
+    #let objPathFile = Obj3D_path & model.objPathFile # proviendra du nouveau loadModel
+    #---------------------------------------------------------------------------------
+    #[
+    let ignoreTexture    = false
+    let debugTextureFile = ""
+    let swapVertYZ = false
+    let swapNormYZ = false
+    let flipU = false
+    let flipV = false
+    let check = false
+    let debug = 1
+    let dbgDecountReload = 0
+    ]#
+    #[
+    let pathSplitted = objPathFile.split(DirSep)
+    echo "pathSplitted: ", pathSplitted
+
+    self.obj3D_path  = pathSplitted[0] & DirSep # nouveau Obj3D_path
+    self.objPath     = pathSplitted[1 ..^ 2].joinPath
+    self.objPathFile = pathSplitted[1 ..^ 1].joinPath
+    ]#
+
+    #[
+    let objPath0     = model.objPath
+    let objPathFile0 = self.obj3D_path & model.objPathFile # new
+    echo fmt"self.obj3D_path: '{self.obj3D_path}' & model.objPathFile: '{model.objPathFile}' -> objPathFile0: '{objPathFile0}'"
+
+
+    echo fmt"zzzzzzzzzzzzzzzzzz self.obj3D_path:'{self.obj3D_path}' ?= obj3D_path0:'{obj3D_path0}'"
+    assert self.obj3D_path == obj3D_path0
+
+    self.objPath = pathSplitted[1 ..^ 1].joinPath
+    self.objPathFile = self.obj3D_path & self.objPath
+    echo fmt"zzzzzzzzzzzzzzzzzz self.objPathFile:'{self.objPathFile}' ?= objPathFile0:'{objPathFile0}'"
+    assert self.objPathFile == objPathFile0
+
+    self.obj3D_path  = ?
+    self.objPathFile = ?
+    ]#
+
+    self.debugTextureFile = debugTextureFile
+
+    if not fileExists(objFileAbsPath):
+        echo fmt"ERROR '{objFileAbsPath}' not found"
+        assert false
         return false
 
-    if debugTextureFile.len > 0:
+    let (path, name, ext) = splitFile(objFileAbsPath)
+    self.absPath = path
+    self.objFile = name & ext
+    #[
+    if debugTextureFile.len > 0 and false:
         let fullDebugTextureFilePath = Obj3D_path & debugTextureFile
         if fileExists(fullDebugTextureFilePath):
             self.debugTextureFile = fullDebugTextureFilePath
             echo fmt"INFO: '{fullDebugTextureFilePath}' found"
         else:
-            self.debugTextureFile = ""
+            self.debugTextureFile = debugTextureFile
             echo fmt"WARN: '{fullDebugTextureFilePath}' not found"
-
+    ]#
     self.o_eq_g      = true # treat 'o' as 'g'
-    self.texPathFile = "" # Obj3D_path & model.texPathFile
-    self.normalize   = model.normalize
-    self.ignoreObjs  = model.ignoreObjs
+    #self.texPathFile = Obj3D_path & model.texPathFile
+    #self.normalize   = model.normalize
+    #self.ignoreObjs  = model.ignoreObjs
     self.check       = check
     self.swapVertYZ  = swapVertYZ
     self.swapNormYZ  = swapNormYZ
@@ -1141,7 +1213,7 @@ proc loadModel*(self: ObjLoader; model: Model; ignoreTexture=false, debugTexture
 
     #echo fmt"ObjLoader: {result}"
 
-    self.load(debug)
+    self.load(objFileAbsPath, debug)
 
     return true
 

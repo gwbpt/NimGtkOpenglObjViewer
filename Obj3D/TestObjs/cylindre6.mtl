@@ -1,6 +1,6 @@
 # cylindre6.mtl
 
-newmtl Cylindre6
+newmtl Cylindre6a
 	Ns 53.0000
 	Ni 1.5000
 	d 1.0000
@@ -11,6 +11,20 @@ newmtl Cylindre6
 	Kd 1.0000 1.0000 1.0000
 	Ks 0.1800 0.1800 0.1800
 	Ke 0.0000 0.0000 0.0000
-	map_Ka cylindre6.png
-	map_Kd cylindre6.png
+	map_Ka cylindre6a.png
+	map_Kd cylindre6a.png
+
+newmtl Cylindre6b
+	Ns 53.0000
+	Ni 1.5000
+	d 1.0000
+	Tr 0.0000
+	Tf 1.0000 1.0000 1.0000
+	illum 2
+	Ka 1.0000 1.0000 1.0000
+	Kd 1.0000 1.0000 1.0000
+	Ks 0.1800 0.1800 0.1800
+	Ke 0.0000 0.0000 0.0000
+	map_Ka cylindre6b.png
+	map_Kd cylindre6b.png
 

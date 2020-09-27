@@ -1,4 +1,8 @@
 
+const NL* = "\p"
+const TAB* = '\t'
+const SQ* = "'"[0] # SimpleQuote char
+
 iterator items1in1out*[T](ins0: openArray[T]; outs0: var openArray[T]): (T, ptr T) {.inline.} =
     let n = len(ins0)
     assert len(outs0) == n
@@ -63,9 +67,6 @@ iterator itemsInsOuts*[T](ins: seq[openArray[T]]; outs: var seq[openArray[T]]): 
 proc addArrays(ins0, ins1:openArray[float]; outs0: var openArray[float]) =
     for in0, in1, out0 in items2in1out(ins0, ins1, outs0):
         out0[] = in0 + in1
-
-const NL* = "\p"
-const TAB* = '\t'
 
 const Obj3D_path*  = "Obj3D/" # "../../../"
 const debugTexturePath* = Obj3D_path & "DebugTextures/"
