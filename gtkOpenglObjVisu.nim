@@ -73,7 +73,7 @@ proc reset(pd: var PolygonDisplay) =
 
 type
     Obj3D = ref object of RootObj
-        name   : string
+        name    : string
         parent  : Obj3D
         children: seq[Obj3D]
 
@@ -96,9 +96,6 @@ proc toStr(self: Obj3D): string =
     result &= NL & fmt"    mtl: {self.mtl}"
     for child in self.children:
         result &= NL & fmt"    child {child.name:16}: hidden:{child.hidden}, mtlName:'{child.mtlName}', mapKaId:{child.mapKaId}, mapKdId:{child.mapKdId}, mapKsId:{child.mapKsId}"
-
-#proc accLinf(self: Obj3D; i: int; dv: float32) = self.speed[i] += dv
-#proc accRotf(self: Obj3D; i: int; dv: float32) = self.dxyzRot[i] += dv
 
 proc accLin(self: Obj3D; idx: int; dv: float32) =
     if dv == 0.0f: # stop vitess
@@ -144,7 +141,6 @@ import nimPNG
 
 proc bind_texture(texture_id: GLuint; mode="DEFAULT"; debug=1) =
     #[ Bind texture_id using several different modes
-
         Notes:
             Without mipmapping the texture is incomplete
             and requires additional constraints on OpenGL
@@ -158,7 +154,7 @@ proc bind_texture(texture_id: GLuint; mode="DEFAULT"; debug=1) =
         TODO:
             - Rename modes to something useful
     ]#
-    if debug >= 1: echo fmt"TTTTTTTTTTTTTTTTTTTTTT bind_texture {texture_id}: mode: {mode}"
+    if debug >= 1: echo fmt"bind_texture id:{texture_id}: mode: {mode}"
     if mode == "DEFAULT":
         glBindTexture(GL_TEXTURE_2D, texture_id)
         glPixelStorei(GL_UNPACK_ALIGNMENT,1)
@@ -223,7 +219,7 @@ proc load_image(fileName, mode="MIN_FILTER", debug=1): GLuint = # return texture
 
     var texture_id: GLuint
     glGenTextures(1, texture_id.addr) # proc glGenTextures(n: GLsizei, textures: ptr GLuint)
-    echo "tttttttttttttttttttttttttttttt glGenTextures: texture_id: ", texture_id
+    #echo "glGenTextures: texture_id: ", texture_id
 
     # To use OpenGL 4.2 ARB_texture_storage to automatically generate a single mipmap layer
     # uncomment the 3 lines below.  Note that this should replaced glTexImage2D below.
@@ -240,7 +236,6 @@ proc load_image(fileName, mode="MIN_FILTER", debug=1): GLuint = # return texture
     let size   = im.data.len
     let nPixs  = width * height
     #echo fmt"Image: width:{width}, height:{height}, nPixs:{nPixs}, im.data.len:{size}"
-
     #echo fmt"im.data[0]: {im.data[0].int},  {im.data[1].int},  {im.data[2].int},  {im.data[3].int}"
 
     if false: # make a square hole in the midle of texture using transparency
@@ -302,7 +297,7 @@ proc load_image(fileName, mode="MIN_FILTER", debug=1): GLuint = # return texture
            width.GLsizei,   # width : GLsizei
            height.GLsizei,  # height: GLsizei
            0,               # border: GLint
-           GL_RGBA,         # format: GLenum # GL_RGBA !!!!!!!!!!!!!!!!!!!GL_RGB8UI?
+           GL_RGBA,         # format: GLenum # GL_RGBA !!!!!GL_RGB8UI?
            GL_UNSIGNED_BYTE,# `type`: GLenum
            ptrPix           # pixels: pointer ?
        )
@@ -389,24 +384,18 @@ type KeyCode2NameActionTable* = type(exTable)
 #but tuple (int, tuple of (string, proc (self: Obj3D, idx: int, dv: float32){.gcsafe, locks: 0.}, Obj3D, int, float32))'
 type
     ParamsObj* = object of RootObj
-        model*     : OBJM.Model
-        addModelReq  : bool # a supprimer
-        modelFileName: string
+        modelFileName   : string
         debugTextureFile: string
-        useTextures: bool
-        cullFace   : int
-        time, dt   : float
-        delta      : float32
-        frames*    : int
-        polygDisp* : PolygonDisplay
-        rgbaMask   : Vec4f
-        camer*     : Obj3D
-        obj3Ds*    : seq[Obj3D]
-        obj3dSel   : Obj3D
-        #nObjToDisplay  : int
-        #objIdxToDisplay: seq[bool]
-        #texFilesToLoad : OrderedTable[string, GLuint]
-        #textureIds     : OrderedTable[string, GLuint]
+        useTextures     : bool
+        cullFace        : int
+        time, dt        : float
+        delta           : float32
+        frames*         : int
+        polygDisp*      : PolygonDisplay
+        rgbaMask        : Vec4f
+        camer*          : Obj3D
+        obj3Ds*         : seq[Obj3D]
+        obj3dSel        : Obj3D
         textureNameToIds: OrderedTable[string, GLuint]
         KeyCod2NamActionObj* : KeyCode2NameActionTable
 
@@ -445,10 +434,7 @@ type
 proc `$`*(self: Params): string =
     result = fmt"Params: frames: {self.frames}"
     result &= ", model: "
-    if self.model == nil:
-        result &= "nil"
-    else:
-        result &= self.model.name
+    result &= self.modelFileName
 
 type
     MyGLArea* = ref object of GLArea
@@ -461,16 +447,17 @@ proc newMyGLArea*(parms: Params): MyGLArea =
     #result.parms = parms
     result.objGL = new ObjsOpengl
 
-let parms = new Params # Global var !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+let parms = new Params # Global var !!!!!!!!!!!!
+
 #------------------------------------------------------
+
 proc prepareBufs( self: MyGLArea; modelFile: string,
-                  check=false, swapVertYZ=false, swapNormYZ=false, flipU=false, flipV=false,
+                  check=false, normalize=true, swapVertYZ=false, swapNormYZ=false, flipU=false, flipV=false,
                   ignoreTexture=false, debugTextureFile="";
                   grpsToInclude: seq[string]= @[], grpsToExclude: seq[string]= @[];
                   debug=1, dbgDecountReload=0
                 ): Obj3D =
 
-    #let model = parms.model
     let objGL = self.objGL
     #if debug >= 1: echo fmt"prepareBufs: {modelFile.extractFilename}, swapVertYZ:{swapVertYZ}, swapNormYZ:{swapNormYZ}, flipU:{flipU}, flipV:{flipV}"
 
@@ -478,7 +465,7 @@ proc prepareBufs( self: MyGLArea; modelFile: string,
     let ok = OBJL.loadModel(objLoader, modelFile,
                             ignoreTexture=ignoreTexture,
                             debugTextureFile=debugTextureFile,
-                            swapVertYZ=swapVertYZ, swapNormYZ=swapNormYZ,
+                            normalize=normalize, swapVertYZ=swapVertYZ, swapNormYZ=swapNormYZ,
                             flipU=flipU, flipV=flipV, check=check,
                             debug=debug, dbgDecountReload=dbgDecountReload
                             )
@@ -500,7 +487,7 @@ proc prepareBufs( self: MyGLArea; modelFile: string,
 
 
 proc on_createContext(self: MyGLArea): uInt64 =
-    echo "********************** MyGLArea.on_createContext"
+    echo "MyGLArea.on_createContext"
 
 proc on_unrealize(self: MyGLArea) =
     echo "MyGLArea.on_unrealize"
@@ -522,9 +509,10 @@ proc addModel(self: MyGLArea; modelFile:string) = # model: OBJM.Model) =
 
     let objGL = self.objGL
 
+    let normalize  = true  # model.normalize
     let swapVertYZ = false # model.swapYZ
     let swapNormYZ = false # model.swapYZ
-    let obj3d = self.prepareBufs(modelFile, flipV=true, swapVertYZ=swapVertYZ, swapNormYZ=swapNormYZ, debugTextureFile=parms.debugTextureFile)
+    let obj3d = self.prepareBufs(modelFile, flipV=true, normalize=normalize, swapVertYZ=swapVertYZ, swapNormYZ=swapNormYZ, debugTextureFile=parms.debugTextureFile, debug=2)
     if obj3d == nil:
         echo "!!!!!!!!!!!!!!!!!!!!!! Cannot load model: ", modelFile
         return
@@ -584,33 +572,8 @@ proc addModel(self: MyGLArea; modelFile:string) = # model: OBJM.Model) =
     echo "normals exists: ", isNormalBuf
     echo "uvts    exists: ", is_uv_buf
 
-    #[
-    parms.nObjToDisplay = objGL.grps_range.len
-    parms.objIdxToDisplay = @[] # flags to show/hide objects
-    for obj3d in parms.subject:
-        parms.objIdxToDisplay.add(true)
-    # echo "objIdxToDisplay : ", parms.objIdxToDisplay
-    ]#
-
-    #[
-    #var textureLocs: seq[GLint] # in fragment shader
-    if parms.texFilesToLoad.len >= 1:
-        parms.useTextures = true
-        # load textureIds
-        var i = 0
-        for texFile in parms.texFilesToLoad.keys:
-            echo fmt"loading textureFile: {texFile}"
-            if i >= 6 :
-                echo "too much texFilesToLoad: > 6 !"
-                break
-            objGL.textureIds.add(load_image(texFile, debug=2))
-            inc(i)
-        echo fmt"objGL.textureIds.len:{objGL.textureIds.len}"
-    echo "useTextures: ", parms.useTextures
-    ]#
-
     objGL.textureLoc0 = glGetUniformLocation(objGL.progId, "texture0")
-    #echo "Got handle for uniform texture0: ", objGL.textureLoc0
+    echo "Got handle for uniform texture0: ", objGL.textureLoc0
 
     glBindVertexArray(objGL.mesh.vao)
     glBindBuffer(GL_ARRAY_BUFFER, 0)
@@ -633,6 +596,7 @@ proc addModel(self: MyGLArea; modelFile:string) = # model: OBJM.Model) =
     glEnableVertexAttribArray(0)
     glVertexAttribPointer(0'u32, vectorDim, EGL_FLOAT, false, float32.sizeof * vectorDim, nil)
     glBindBuffer(GL_ARRAY_BUFFER, 0)
+
 
 proc on_realize(self: MyGLArea) =
     echo "MyGLArea.on_realize"
@@ -749,20 +713,18 @@ proc on_realize(self: MyGLArea) =
             bufParams.attrLoc = resp.GLuint
             #echo fmt"location {bufParams.attrLoc.int}: '{bufParams.name}'"
 
-    # --------------------------------------------------------------------------------------------------
-
-    #self.addModel(parms.model)
 
 proc on_resize(self: MyGLArea; width: int, height: int) = # ; user_data: pointer ?????
     echo "on_resize : (w, h): ", (width, height)
     self.width  = width
     self.height = height
 
+
 proc addObj(self: MyGLArea; fileName:string) =
     echo fmt"--------------------- MyGLArea.addObj: {fileName} ----------------------"
     #let pwd = joinPath(os.getCurrentDir(), "Obj3D")
     parms.modelFileName = fileName # .relativePath(pwd) # make a request
-    #parms.addModelReq = true # set the request
+
 
 proc on_render(self: MyGLArea; context: gdk.GLContext): bool = # ; user_data: pointer ?????
 
@@ -991,7 +953,6 @@ proc actionKey(event: gdk.EventKey, parms: Params, release=false) =
         parms.polygDisp.reset()
         for obj3d in parms.obj3Ds:
             obj3d.resetPos()
-
     else:
         echo fmt"no action for keyCode: {keyCode} ie keyChar: '{keyChar}'"
         return
@@ -1040,15 +1001,11 @@ proc chooseFileObj(): string =
   ff.setName("file.obj only")
   ff.addPattern("*.obj")
   chooser.addFilter(ff)
-  #discard chooser.addButton("_Close"  , ResponseType.close.ord)
-  #chooser.connect("response", response)
-  #chooser.show
+
   let res = chooser.run()
-  #var fileName: string
   if res == ResponseType.accept.ord:
-    result = chooser.getFilename()
-    #echo "accept open: ", result # fileName
-  #result = fileName
+      result = chooser.getFilename()
+      #echo "accept open: ", result # fileName
   chooser.destroy
 
 
@@ -1067,35 +1024,38 @@ proc onClick(b: Button, p:LabTxt) =
   echo "click " & txt
   l.label = txt & " has been clicked"
 
+
 proc onClick(b: Button, p:SbIdTxt) =
   let (sb, id, txt) = p
   echo "click " & txt
   discard sb.push(id, txt & " has been clicked")
+
 
 proc onAddObj(mi: MenuItem, glArea: MyGLArea) =
   let fileName = chooseFileObj()
   # echo "onAddObj: fileName: ", fileName
   if fileName.len > 0: glArea.addObj(fileName)
 
+
 proc onWindowDestroy(w: gtk.Window, txt= "") =
   echo "onWindowDestroy " & txt
   mainQuit()
+
 
 proc onQuitMenuActivate(mi: MenuItem, txt= "") =
   echo "onQuitMenuActivate " & txt
   mainQuit()
 
 
-proc main(mdl: OBJM.Model, debugTextureFile="") =
+proc main(debugTextureFile="") =
     #var parms = new Params
     parms.dt    = 0.050
     parms.delta = 0.004f
-    parms.model = mdl
     parms.debugTextureFile = debugTextureFile
 
     gtk.init()
     let window = newWindow()
-    window.title = "GTK3 & Nim: " & parms.model.name
+    window.title = "GTK3 OpenGL Nim"
     window.defaultSize = (400, 300)
 
     window.position = WindowPosition.center
@@ -1235,68 +1195,7 @@ when isMainModule:
     let appName = extractFilename(getAppFilename())
     echo fmt"Begin {appName}"
 
-    let params = commandLineParams()
-    let nParams = params.len
-
-    import Tables
-
-    let nargs = nParams + 1
-    var sys_argv: seq[string] = @[appName]
-    for param in params: sys_argv.add(param)
-    #echo "sys_argv: ", sys_argv # emulation sys.argv
-
-    proc printHelpAndQuit() =
-        echo "Help:"
-        echo fmt"usage: nim c -r {appName}.nim Suzanne"
-        echo "args: -dbtx: debug texture to see mesh"
-        echo "args: -igtx: ignore texture"
-        echo "args: -ig name: include only groups"
-        echo "args: -eg name: exclude only groups"
-        echo fmt"example: nim c -r {appName}.nim 4 -o 2-model-1 WhipperNude_Head"
-        OBJM.printAllModelNames()
-        quit()
-
-    var noTexture        : bool
-    var grpsToInclude    : seq[string]
-    var grpsToExclude    : seq[string]
-    var flipU, flipV     : bool
-    var debugTextureFile = ""
-    var debug            = 1
-    var ignoreTexture    = false
-    var modelName        = "Cylindre6" # default model
-
-    if nargs >= 2:
-        modelName = sys_argv[1]
-
-    let model = OBJM.getModel(modelName)
-    if model == nil:
-        echo fmt"{modelName} not found !"
-        printHelpAndQuit()
-    else:
-      echo model
-
-    var arg: string
-    if nargs >= 3:
-        var i = 2
-        while i < nargs:
-            arg = sys_argv[i]
-            echo "arg{i}: '{arg}'"
-            if   arg == "-dbtx":
-                debugTextureFile = debugTexturePath
-            elif arg == "-notx": noTexture = true
-            elif arg.in(["-ig", "-eg"]):
-                var grps: seq[string]
-                inc(i)
-                while i < nargs and sys_argv[i][0] != '-':
-                    grps.add(sys_argv[i])
-                    inc(i)
-                if len(grps) == 0: echo "-ig or -og options need one or several name(s) !"; printHelpAndQuit()
-                if   arg == "-ig": grpsToInclude = grps
-                elif arg == "-eg": grpsToExclude = grps
-            else: echo "unknown arg: '{arg}'"; printHelpAndQuit()
-            inc(i)
-
-    main(model, debugTextureFile=debugTextureFile)
+    main()
 
     echo fmt"End {appName}"
 

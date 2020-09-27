@@ -348,6 +348,7 @@ type
         tokens     : seq[string]
         dbgDecount, dbgDecountReload : int
         state      : States
+        changeState: bool
         lineRead   : string
         swapVertYZ, swapNormYZ, flipU, flipV : bool
 
@@ -561,7 +562,7 @@ proc fillVUNnonIndexedOfFaceGrp(self: Group, debug=0) =
 
 proc addGroup(self: ObjsManager; grpTyp:GrpTyp; grpName:string, check:bool) =
     var grp = newGroup(self, self.selGrp, grpTyp, name=grpName, debugTextureFile=self.debugTextureFile, ignoreTexture=self.ignoreTexture, check=check, debug=1)
-    grp.usemtl = self.selMtl
+    #grp.usemtl = self.selMtl
     self.groups[grpName] = grp
     self.selGrp = grp
 
@@ -595,7 +596,7 @@ proc newObjsManager(parent:ObjLoader; debugTextureFile="", ignoreTexture=false, 
     result.vunIdxsFastList = new SeqIdx3FastFind
 
     result.selGrp = nil  # do not remove used by addObjGroup
-    result.addObjGroup(grpName="default", check=check)
+    #result.addObjGroup(grpName="default", check=check) # plus tard
 
     result.init_uvs_of_default_texture()
 
@@ -861,11 +862,13 @@ proc parse_line_line(self:ObjLoader) =
     echo fmt"lin{self.lineIdx:6}:'{self.lineRead}': line geometry not supported !"
 
 proc parse_face_line(self:ObjLoader) =
-    #if not self.parseOn: return
+    if self.changeState: # prev line was not a face_line
+        if self.objMgr.selGrp == nil:
+            self.objMgr.addObjGroup(grpName="default", check=self.check)
 
-    #let grpo = self.objMgr.selGrp
-    #let grp = grpo.get
-    self.objMgr.selGrp.initAtFirstFace()
+        self.objMgr.selGrp.usemtl = self.objMgr.selMtl
+
+        self.objMgr.selGrp.initAtFirstFace()
 
     var faceIdxsStr = self.tokens
     var nVertsInFace = faceIdxsStr.len
@@ -942,15 +945,15 @@ const stateChanges: State2Cmd2States =
 #echo "stateChanges: " & NL, stateChanges
 
 let parsers = { States.MTLIB : parse_mtlib_line,
-                States.IN_O  : parse_objName_line,
                 States.IN_V  : parse_vert_line,
                 States.IN_VT : parse_uvtx_line,
                 States.IN_VN : parse_norm_line,
-                States.IN_F  : parse_face_line,
-                States.IN_L  : parse_line_line,
                 States.USEMTL: parse_usemtl_line,
+                States.IN_O  : parse_objName_line,
                 States.IN_G  : parse_gGrp_line,
                 States.IN_S  : parse_sGrp_line,
+                States.IN_F  : parse_face_line,
+                States.IN_L  : parse_line_line,
                 States.END   : parse_end_file,
             }.toTable
 
@@ -962,11 +965,12 @@ proc printStatus(self:ObjLoader, abort=false) =
 
 proc ignoreKey(self:ObjLoader) = echo fmt"ignore key '{self.key}"
 
+#[
 proc changeState(self:ObjLoader, newState:States) =
     self.dbgDecount = self.dbgDecountReload
-    if self.debug >= 2: echo fmt"line{self.lineIdx:06d}: {self.state} => {newState}"
+    if self.debug >= 2: echo fmt"line{self.lineIdx:06d}: {self.state:6} => {newState:6}"
     self.state = newState
-
+]#
 #------------------------------------------------------
 
 proc load(self:ObjLoader; objFileAbsPath:string; debug=1) =
@@ -1032,7 +1036,12 @@ proc load(self:ObjLoader; objFileAbsPath:string; debug=1) =
         if not self.key.in(keyActions): self.printStatus(abort=true)
         let nextState = keyActions[self.key]
         if nextState == IGNORE: continue
-        if nextState != NoChg: self.changeState(nextState)
+        self.changeState = nextState != NoChg
+        if self.changeState:
+            #self.changeState(nextState)
+            self.dbgDecount = self.dbgDecountReload
+            if self.debug >= 2: echo fmt"line{self.lineIdx:06d}: {self.state:6} => {nextState:6}"
+            self.state = nextState
 
         if self.state.notIn(parsers):
             self.parseNotImplemented()
@@ -1116,7 +1125,7 @@ proc loadModel*(self: ObjLoader;
                 objFileAbsPath: string;
                 ignoreTexture=false,
                 debugTextureFile="",
-                swapVertYZ=false, swapNormYZ=false,
+                normalize=true, swapVertYZ=false, swapNormYZ=false,
                 flipU=false, flipV=false, check=false,
                 debug=1, dbgDecountReload=0
                ): bool =
@@ -1192,7 +1201,7 @@ proc loadModel*(self: ObjLoader;
     ]#
     self.o_eq_g      = true # treat 'o' as 'g'
     #self.texPathFile = Obj3D_path & model.texPathFile
-    #self.normalize   = model.normalize
+    self.normalize   = normalize # model.normalize
     #self.ignoreObjs  = model.ignoreObjs
     self.check       = check
     self.swapVertYZ  = swapVertYZ
