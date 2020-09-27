@@ -95,7 +95,7 @@ proc toStr(self: Obj3D): string =
     result = fmt"Obj3D {self}:"
     result &= NL & fmt"    mtl: {self.mtl}"
     for child in self.children:
-        result &= NL & fmt"    child {child.name:16}: hidden:{child.hidden}, mtlName:'{child.mtlName}', mapKaId:{child.mapKaId}, mapKdId:{child.mapKdId}, mapKsId:{child.mapKsId}"
+        result &= NL & fmt"    child: {SQ & child.name & SQ:21}: hidden:{child.hidden}, mtlName:'{child.mtlName}', mapKaId:{child.mapKaId}, mapKdId:{child.mapKdId}, mapKsId:{child.mapKsId}"
 
 proc accLin(self: Obj3D; idx: int; dv: float32) =
     if dv == 0.0f: # stop vitess

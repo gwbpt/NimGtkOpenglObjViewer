@@ -295,9 +295,11 @@ const
     triangle_uvIdxs: array[4, int] = [0, 1, 2 ,3]
 
 type
+    Axis* = enum X, Y, Z
+
     GrpTyp = enum oGROUP, gGROUP
 
-    States = enum NoChg, IGNORE, INIT, MTLIB, IN_O, IN_V, IN_VT, IN_VN, IN_F, IN_L, IN_G, USEMTL, IN_S, END
+    States = enum NoChg, IGNORE, INIT, VERTICAL, UNIT, MTLIB, IN_O, IN_V, IN_VT, IN_VN, IN_F, IN_L, IN_G, USEMTL, IN_S, END
 
     Group = ref object of RootObj
         objMgr  : ObjsManager # forward declaration in same type
@@ -326,7 +328,6 @@ type
         vunIdxsFastList: SeqIdx3FastFind
         allFaceGroupNames: seq[string]
         selGrp: Group
-        selMtl: string
 
     ObjLoader* = ref object of RootObj
         matTplLib* : MatTmplLib
@@ -337,6 +338,9 @@ type
         absPath, objFile* : string
         debug      : int
         normalize, check, o_eq_g : bool
+        selMtl     : string
+        vertical   : Axis # Y or Z
+        unit       : float32 # default = 1.0
         ignoreObjs : seq[string]
         allVerts   : seq[Vec3f]
         allNorms   : seq[Vec3f]
@@ -562,7 +566,6 @@ proc fillVUNnonIndexedOfFaceGrp(self: Group, debug=0) =
 
 proc addGroup(self: ObjsManager; grpTyp:GrpTyp; grpName:string, check:bool) =
     var grp = newGroup(self, self.selGrp, grpTyp, name=grpName, debugTextureFile=self.debugTextureFile, ignoreTexture=self.ignoreTexture, check=check, debug=1)
-    #grp.usemtl = self.selMtl
     self.groups[grpName] = grp
     self.selGrp = grp
 
@@ -792,24 +795,19 @@ proc parse_sGrp_line(self:ObjLoader) =
 proc parse_usemtl_line(self:ObjLoader) = # Material Template Library
     let mtlName = self.tokens[0]
     echo fmt"lin{self.lineIdx:6}: parse_usemtl_line:'{mtlName}'"
-    self.objMgr.selMtl = mtlName
-    #[
-    #let grpo = self.objMgr.selGrp
-    #let grp = grpo.get
-    if self.objMgr.selGrp.ignoreTexture or self.objMgr.selGrp.debugTextureFile.len > 0: return
+    self.selMtl = mtlName
 
-    #if self.objMgr.selGrp is None: self.addFaceGroup("default")
 
-    if self.matTplLib != nil:
-        if self.matTplLib.mtls.contains(mtlName):
-             = self.matTplLib.mtls[mtlName]
-            #self.objMgr.selGrp.usemtl = self.matTplLib.mtls[mtlName]
-            #echo fmt"self.objMgr.selGrp.usemtl:'{self.objMgr.selGrp.usemtl:19}'{NL}found in mtl.mtls:{self.matTplLib.mtls}"
-        else:
-            echo fmt"!!!! usemtl: {mtlName:19} not found in mtl.mtls:{self.matTplLib.mtls} !!!!"
-            raise
-    else: echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! matTplLib is None !"
-    ]#
+proc parse_vertical_line(self:ObjLoader) =
+    let y_or_z = self.tokens[0]
+    if   y_or_z == "y" : self.vertical = Axis.Y
+    elif y_or_z == "z" : self.vertical = Axis.Z
+    else: echo "vertical shouldbe in : 'y', 'z'"
+
+proc parse_unit_line(self:ObjLoader) =
+    let unitStr = self.tokens[0]
+    self.unit = parseFloat(unitStr).float32
+
 #--------------------------
 
 proc parse_f3(s3: seq[string], off=0, swapYZ=false): Vec3f =
@@ -866,7 +864,7 @@ proc parse_face_line(self:ObjLoader) =
         if self.objMgr.selGrp == nil:
             self.objMgr.addObjGroup(grpName="default", check=self.check)
 
-        self.objMgr.selGrp.usemtl = self.objMgr.selMtl
+        self.objMgr.selGrp.usemtl = self.selMtl
 
         self.objMgr.selGrp.initAtFirstFace()
 
@@ -930,7 +928,7 @@ type
 const stateChanges: State2Cmd2States =
   {
     States.INIT  : {"mtllib": States.MTLIB , "v" : States.IN_V   , "g" : States.IN_G , "o" : States.IN_O , "vn": States.IN_VN, "end": States.END}.toTable,
-    States.MTLIB : {"v"     : States.IN_V  , "g" : States.IN_G   , "o" : States.IN_O   , "end": States.END}.toTable,
+    States.MTLIB : {"v"     : States.IN_V  , "g" : States.IN_G   , "o" : States.IN_O , "end": States.END}.toTable,
     States.IN_V  : {"v"     : States.NoChg , "vt": States.IN_VT  , "vn": States.IN_VN, "f" : States.IN_F , "o" : States.IN_O, "end": States.END}.toTable,
     States.IN_VT : {"vt"    : States.NoChg , "vn": States.IN_VN  , "f" : States.IN_F , "g" : States.IN_G                    , "usemtl": States.USEMTL, "end": States.END}.toTable,
     States.IN_VN : {"vn"    : States.NoChg , "vt": States.IN_VT  , "v" : States.IN_V , "f" : States.IN_F , "g" : States.IN_G, "usemtl": States.USEMTL,"s" : States.IGNORE, "end": States.END}.toTable,
@@ -942,19 +940,28 @@ const stateChanges: State2Cmd2States =
     States.IN_L  : {"l"     : States.NoChg , "usemtl": States.USEMTL, "f" : States.IN_F   , "g" : States.IN_G   , "o" : States.IN_O , "v" : States.IN_V , "end": States.END}.toTable,
   }.toTable
 
+#States = enum NoChg, IGNORE, INIT, MTLIB, IN_O, IN_V, IN_VT, IN_VN, IN_F, IN_L, IN_G, USEMTL, IN_S, END
+const
+    nameToState = { "vertical": States.VERTICAL, "unit": States.UNIT,
+                    "mtllib": States.MTLIB , "v": States.IN_V, "vt": States.IN_VT, "vn": States.IN_VN,
+                    "usemtl": States.USEMTL, "o": States.IN_O, "g" : States.IN_G , "s" : States.IN_S ,
+                    "f": States.IN_F, "l": States.IN_L, "end": States.END}.toTable
+
 #echo "stateChanges: " & NL, stateChanges
 
-let parsers = { States.MTLIB : parse_mtlib_line,
-                States.IN_V  : parse_vert_line,
-                States.IN_VT : parse_uvtx_line,
-                States.IN_VN : parse_norm_line,
-                States.USEMTL: parse_usemtl_line,
-                States.IN_O  : parse_objName_line,
-                States.IN_G  : parse_gGrp_line,
-                States.IN_S  : parse_sGrp_line,
-                States.IN_F  : parse_face_line,
-                States.IN_L  : parse_line_line,
-                States.END   : parse_end_file,
+let parsers = { States.VERTICAL: parse_vertical_line,
+                States.UNIT    : parse_unit_line,
+                States.MTLIB   : parse_mtlib_line,
+                States.IN_V    : parse_vert_line,
+                States.IN_VT   : parse_uvtx_line,
+                States.IN_VN   : parse_norm_line,
+                States.USEMTL  : parse_usemtl_line,
+                States.IN_O    : parse_objName_line,
+                States.IN_G    : parse_gGrp_line,
+                States.IN_S    : parse_sGrp_line,
+                States.IN_F    : parse_face_line,
+                States.IN_L    : parse_line_line,
+                States.END     : parse_end_file,
             }.toTable
 
 
@@ -965,12 +972,6 @@ proc printStatus(self:ObjLoader, abort=false) =
 
 proc ignoreKey(self:ObjLoader) = echo fmt"ignore key '{self.key}"
 
-#[
-proc changeState(self:ObjLoader, newState:States) =
-    self.dbgDecount = self.dbgDecountReload
-    if self.debug >= 2: echo fmt"line{self.lineIdx:06d}: {self.state:6} => {newState:6}"
-    self.state = newState
-]#
 #------------------------------------------------------
 
 proc load(self:ObjLoader; objFileAbsPath:string; debug=1) =
@@ -1032,13 +1033,19 @@ proc load(self:ObjLoader; objFileAbsPath:string; debug=1) =
         self.key    = tokens[0].toLower
         self.tokens = tokens[1 ..^ 1]
 
-        let keyActions = stateChanges[self.state]
-        if not self.key.in(keyActions): self.printStatus(abort=true)
-        let nextState = keyActions[self.key]
-        if nextState == IGNORE: continue
-        self.changeState = nextState != NoChg
+        var nextState: States
+        if false:
+            let keyActions = stateChanges[self.state]
+            if not self.key.in(keyActions): self.printStatus(abort=true)
+            nextState = keyActions[self.key]
+            if nextState == IGNORE: continue
+            self.changeState = nextState != NoChg
+        else:
+            if not self.key.in(nameToState): self.printStatus(abort=true)
+            nextState = nameToState[self.key]
+            self.changeState = nextState != self.state
+
         if self.changeState:
-            #self.changeState(nextState)
             self.dbgDecount = self.dbgDecountReload
             if self.debug >= 2: echo fmt"line{self.lineIdx:06d}: {self.state:6} => {nextState:6}"
             self.state = nextState
@@ -1111,15 +1118,9 @@ proc load(self:ObjLoader; objFileAbsPath:string; debug=1) =
     #quit() # **********************************************************
 
 proc newObjLoader*(): ObjLoader =
-    # init if any
     result = new ObjLoader
-
-# model    : objPath, objFile, objPathFile, texFile, texPathFile
-# ObjLoader: objPath,          objPathFile, texPathFile + obj3D_path
-
-
-#proc loadModel*(self: ObjLoader; model: Model;
-#ignoreTexture=false, debugTextureFile=""; swapVertYZ=false, swapNormYZ=false; flipU=false, flipV=false, check=false, debug=1, dbgDecountReload=0): bool =
+    result.vertical = Axis.Y
+    result.unit     = 1.0f
 
 proc loadModel*(self: ObjLoader;
                 objFileAbsPath: string;
@@ -1130,54 +1131,6 @@ proc loadModel*(self: ObjLoader;
                 debug=1, dbgDecountReload=0
                ): bool =
     # Load Wavefront OBJ
-    #[
-    if true:
-        self.objPath       = model.objPath
-        self.objPathFile   = Obj3D_path & model.objPathFile
-        if not fileExists(self.objPathFile):
-            echo fmt"ERROR '{self.objPathFile}' not found"
-            return false
-    ]#
-    # simulate new loadModel
-    #let objPathFile = Obj3D_path & model.objPathFile # proviendra du nouveau loadModel
-    #---------------------------------------------------------------------------------
-    #[
-    let ignoreTexture    = false
-    let debugTextureFile = ""
-    let swapVertYZ = false
-    let swapNormYZ = false
-    let flipU = false
-    let flipV = false
-    let check = false
-    let debug = 1
-    let dbgDecountReload = 0
-    ]#
-    #[
-    let pathSplitted = objPathFile.split(DirSep)
-    echo "pathSplitted: ", pathSplitted
-
-    self.obj3D_path  = pathSplitted[0] & DirSep # nouveau Obj3D_path
-    self.objPath     = pathSplitted[1 ..^ 2].joinPath
-    self.objPathFile = pathSplitted[1 ..^ 1].joinPath
-    ]#
-
-    #[
-    let objPath0     = model.objPath
-    let objPathFile0 = self.obj3D_path & model.objPathFile # new
-    echo fmt"self.obj3D_path: '{self.obj3D_path}' & model.objPathFile: '{model.objPathFile}' -> objPathFile0: '{objPathFile0}'"
-
-
-    echo fmt"zzzzzzzzzzzzzzzzzz self.obj3D_path:'{self.obj3D_path}' ?= obj3D_path0:'{obj3D_path0}'"
-    assert self.obj3D_path == obj3D_path0
-
-    self.objPath = pathSplitted[1 ..^ 1].joinPath
-    self.objPathFile = self.obj3D_path & self.objPath
-    echo fmt"zzzzzzzzzzzzzzzzzz self.objPathFile:'{self.objPathFile}' ?= objPathFile0:'{objPathFile0}'"
-    assert self.objPathFile == objPathFile0
-
-    self.obj3D_path  = ?
-    self.objPathFile = ?
-    ]#
 
     self.debugTextureFile = debugTextureFile
 
@@ -1189,16 +1142,7 @@ proc loadModel*(self: ObjLoader;
     let (path, name, ext) = splitFile(objFileAbsPath)
     self.absPath = path
     self.objFile = name & ext
-    #[
-    if debugTextureFile.len > 0 and false:
-        let fullDebugTextureFilePath = Obj3D_path & debugTextureFile
-        if fileExists(fullDebugTextureFilePath):
-            self.debugTextureFile = fullDebugTextureFilePath
-            echo fmt"INFO: '{fullDebugTextureFilePath}' found"
-        else:
-            self.debugTextureFile = debugTextureFile
-            echo fmt"WARN: '{fullDebugTextureFilePath}' not found"
-    ]#
+
     self.o_eq_g      = true # treat 'o' as 'g'
     #self.texPathFile = Obj3D_path & model.texPathFile
     self.normalize   = normalize # model.normalize
