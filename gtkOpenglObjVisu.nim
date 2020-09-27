@@ -462,14 +462,17 @@ proc prepareBufs( self: MyGLArea; modelFile: string,
     #if debug >= 1: echo fmt"prepareBufs: {modelFile.extractFilename}, swapVertYZ:{swapVertYZ}, swapNormYZ:{swapNormYZ}, flipU:{flipU}, flipV:{flipV}"
 
     let objLoader = OBJL.newObjLoader()
-    let ok = OBJL.loadModel(objLoader, modelFile,
+    let parseOk = OBJL.parseObjFile(objLoader, modelFile, debug=debug, dbgDecountReload=dbgDecountReload)
+    #[
+                    loadModel(objLoader, modelFile,
                             ignoreTexture=ignoreTexture,
                             debugTextureFile=debugTextureFile,
                             normalize=normalize, swapVertYZ=swapVertYZ, swapNormYZ=swapNormYZ,
                             flipU=flipU, flipV=flipV, check=check,
                             debug=debug, dbgDecountReload=dbgDecountReload
                             )
-    if not ok : return
+    ]#
+    if not parseOk : return
 
     result = new Obj3D
     result.name = objLoader.objFile
@@ -481,6 +484,15 @@ proc prepareBufs( self: MyGLArea; modelFile: string,
             ver*, nor*, uvt* : seq[float32]
             idx* : seq[uint32]
     ]#
+    let normOk = OBJL.normalizeModel( objLoader,
+                                      #debugTextureFile="",
+                                      normalize=normalize,
+                                      #swapVertYZ=swapVertYZ, swapNormYZ=swapNormYZ,
+                                      swapVertYZ=true, swapNormYZ=true,
+                                      flipU=flipU, flipV=flipV, check=check,
+                                      debug=1)
+    if not normOk : return
+
     objGL.bufs = OBJL.loadOglBufs(objLoader, debug=1)
 
     echo fmt"Loaded model: {result.name}, include:{grpsToInclude}, exclude:{grpsToExclude}"

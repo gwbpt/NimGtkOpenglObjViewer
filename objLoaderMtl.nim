@@ -10,6 +10,9 @@ import ../../FLOAT16/float16
 
 const logLevel = 2
 
+import times
+var time0: float = cpuTime()
+
 proc plog(level: int; msg: string) =
   if logLevel >= level: stdout.writeLine("LOG" & $level & ": " & msg)
 
@@ -337,7 +340,7 @@ type
         debugTextureFile  : string # abs path
         absPath, objFile* : string
         debug      : int
-        normalize, check, o_eq_g : bool
+        check, o_eq_g : bool
         selMtl     : string
         vertical   : Axis # Y or Z
         unit       : float32 # default = 1.0
@@ -354,7 +357,6 @@ type
         state      : States
         changeState: bool
         lineRead   : string
-        swapVertYZ, swapNormYZ, flipU, flipV : bool
 
 proc `$`*(self: Group): string =
     #let prevName = if self.prevGrp == nil: "None" else: self.prevGrp.name
@@ -476,7 +478,6 @@ proc closeGroup(self: Group) =
     if self.objMgr.objLdr.dbgDecount > 0: echo fmt"<<< close{self}"
 
 #-----------------------------------
-import times
 import terminal # for colored
 
 proc addTriangleWithoutIdx(self: Group; triangl_vunIdxs: seq[Idx3], debug=0) =
@@ -520,8 +521,6 @@ proc addTriangleWithoutIdx(self: Group; triangl_vunIdxs: seq[Idx3], debug=0) =
 proc fillVUNnonIndexedOfFaceGrp(self: Group, debug=0) =
     if debug >= 3: echo fmt"fillVUNnonIndexedOfFaceGrp '{self.name}'"
 
-    var time0, dt : float
-
     time0 = cpuTime()
 
     if debug >= 1 : echo fmt"Group {self.name}.fillVUNnonIndexedOfFaceGrp: debug:{debug}"
@@ -558,7 +557,7 @@ proc fillVUNnonIndexedOfFaceGrp(self: Group, debug=0) =
         print2d(self.uvtxs, "uvtxs_out", debug=debug)
         print2d(self.norms, "norms_out", debug=debug)
 
-    dt = cpuTime() - time0
+    let dt = cpuTime() - time0
     if debug >= 1: echo fmt"Group {self.name}.fillVUNnonIndexedOfFaceGrp: in {dt:7.3f} s"
     #self.faces_vunIdxs_index = @[] #del(self.faces_vunIdxs_index)
 
@@ -728,7 +727,7 @@ proc checkGrps(self:ObjsManager, debug=1) =
         if debug >= 2: echo fmt"checkGrps: allFaceGroupNames.add({name})"
         self.allFaceGroupNames.add(name)
 
-    if len(self.allFaceGroupNames) == 0: echo "***************** allFaceGroupNames empty => raise   !!!!!!"; raise
+    if self.allFaceGroupNames.len == 0: echo "***************** allFaceGroupNames empty => raise   !!!!!!"; assert false
 
     for name in self.allFaceGroupNames:
         #grp.printFull(debug=2)
@@ -737,7 +736,7 @@ proc checkGrps(self:ObjsManager, debug=1) =
 #------------------------------- class ObjLoader ---------------------------------
 
 proc `$`*(self:ObjLoader): string =
-    return fmt"absPath: {self.absPath}, objFile: {self.objFile}, normalize:{self.normalize}, mtl:{self.matTplLib}, objMgr:{NL}   {self.objMgr}"
+    return fmt"absPath: {self.absPath}, objFile: {self.objFile}, mtl:{self.matTplLib}, objMgr:{NL}   {self.objMgr}"
 
 proc getVert(self:ObjLoader, idx: int): Vec3f =
     if idx < len(self.allVerts):
@@ -810,13 +809,9 @@ proc parse_unit_line(self:ObjLoader) =
 
 #--------------------------
 
-proc parse_f3(s3: seq[string], off=0, swapYZ=false): Vec3f =
+proc parse_f3(s3: seq[string], off=0): Vec3f =
     for i in 0 ..< 3:
         result[i] = parseFloat(s3[i+off]).float32
-    if swapYZ:
-        let y = result[1]
-        result[1] = result[2]
-        result[2] = -y
 
 proc parse_vert_line(self:ObjLoader) =
     #if not self.parseOn: return
@@ -825,7 +820,7 @@ proc parse_vert_line(self:ObjLoader) =
     # valid vertex strings are either v x y z or v x y z r g b (Meshlab dumps color to vertices)
     #assert xyz_rgb_Str.len in (3, 6)
     assert xyz_rgb_Str.len == 3 or xyz_rgb_Str.len == 6, fmt"lin{self.lineIdx:6}:'{self.lineRead}': tokens:{self.tokens}: xyz_rgb_Str.len:{xyz_rgb_Str.len} != 3 or 6"
-    self.allVerts.add(parse_f3(xyz_rgb_Str, swapYZ=self.swapVertYZ))
+    self.allVerts.add(parse_f3(xyz_rgb_Str))
     if len(xyz_rgb_Str) == 6:
         self.allCouls.add(parse_f3(xyz_rgb_Str, off=3))
     if self.dbgDecount > 0: echo fmt"parse_uvtx_line: allVerts.len: {self.allVerts.len}"
@@ -835,7 +830,7 @@ proc parse_norm_line(self:ObjLoader) =
 
     let normalStr = self.tokens
     assert len(normalStr) == 3 # , "parse_norm_line: '{}', normalStr: {}"%(self.lineRead, normalStr)
-    self.allNorms.add(parse_f3(normalStr, swapYZ=self.swapNormYZ))
+    self.allNorms.add(parse_f3(normalStr))
     if self.dbgDecount > 0: echo fmt"parse_uvtx_line: allNorms.len: {self.allNorms.len}"
 
 proc parse_uvtx_line(self:ObjLoader) =
@@ -844,16 +839,9 @@ proc parse_uvtx_line(self:ObjLoader) =
     let uvStr = self.tokens
     #echo fmt"parse_uvtx_line: {uvStr}"
     assert uvStr.len >= 2 , fmt"uvStr.len:{uvStr.len} is not >= 2"
-    var u = parseFloat(uvStr[0])
-    var v = parseFloat(uvStr[1])
-    if not ( 0.0 <= u and u <= 1.0 and 0.0 <= v and v <= 1.0 ) :
-        echo fmt"lin{self.lineIdx:6}:'{self.lineRead}': u or v not in 0.0 .. 1.0 -> corrected"
-        u = max(0.0, min(1.0, u))
-        v = max(0.0, min(1.0, v))
-    if self.flipU: u = 1.0 - u
-    if self.flipV: v = 1.0 - v
-    let f2: Vec2f = vec2f(u, v)
-    self.allUvtxs.add(f2)
+    let u = parseFloat(uvStr[0])
+    let v = parseFloat(uvStr[1])
+    self.allUvtxs.add(vec2f(u, v))
     if self.dbgDecount > 0: echo fmt"parse_uvtx_line: allUvtxs.len: {self.allUvtxs.len}"
 
 proc parse_line_line(self:ObjLoader) =
@@ -925,29 +913,11 @@ type
     Cmd2States       = Table[string  , States  ]
     State2Cmd2States = Table[States, Cmd2States]
 
-const stateChanges: State2Cmd2States =
-  {
-    States.INIT  : {"mtllib": States.MTLIB , "v" : States.IN_V   , "g" : States.IN_G , "o" : States.IN_O , "vn": States.IN_VN, "end": States.END}.toTable,
-    States.MTLIB : {"v"     : States.IN_V  , "g" : States.IN_G   , "o" : States.IN_O , "end": States.END}.toTable,
-    States.IN_V  : {"v"     : States.NoChg , "vt": States.IN_VT  , "vn": States.IN_VN, "f" : States.IN_F , "o" : States.IN_O, "end": States.END}.toTable,
-    States.IN_VT : {"vt"    : States.NoChg , "vn": States.IN_VN  , "f" : States.IN_F , "g" : States.IN_G                    , "usemtl": States.USEMTL, "end": States.END}.toTable,
-    States.IN_VN : {"vn"    : States.NoChg , "vt": States.IN_VT  , "v" : States.IN_V , "f" : States.IN_F , "g" : States.IN_G, "usemtl": States.USEMTL,"s" : States.IGNORE, "end": States.END}.toTable,
-    States.IN_O  : {"usemtl": States.USEMTL, "v" : States.IN_V, "end": States.END}.toTable,
-    States.IN_G  : {"usemtl": States.USEMTL, "g" : States.IGNORE , "v" : States.IN_V , "f" : States.IN_F , "end": States.END}.toTable,
-    States.IN_S  : {"usemtl": States.USEMTL, "s" : States.IGNORE , "f" : States.IN_F , "end": States.END}.toTable,
-    States.USEMTL: {"s"     : States.IN_S  , "g" : States.IN_G   , "f" : States.IN_F , "end": States.END}.toTable,
-    States.IN_F  : {"f"     : States.NoChg , "usemtl": States.USEMTL, "g" : States.IN_G   , "o" : States.IN_O   , "v" : States.IN_V , "l" : States.IN_L , "end": States.END}.toTable,
-    States.IN_L  : {"l"     : States.NoChg , "usemtl": States.USEMTL, "f" : States.IN_F   , "g" : States.IN_G   , "o" : States.IN_O , "v" : States.IN_V , "end": States.END}.toTable,
-  }.toTable
-
-#States = enum NoChg, IGNORE, INIT, MTLIB, IN_O, IN_V, IN_VT, IN_VN, IN_F, IN_L, IN_G, USEMTL, IN_S, END
 const
     nameToState = { "vertical": States.VERTICAL, "unit": States.UNIT,
                     "mtllib": States.MTLIB , "v": States.IN_V, "vt": States.IN_VT, "vn": States.IN_VN,
                     "usemtl": States.USEMTL, "o": States.IN_O, "g" : States.IN_G , "s" : States.IN_S ,
                     "f": States.IN_F, "l": States.IN_L, "end": States.END}.toTable
-
-#echo "stateChanges: " & NL, stateChanges
 
 let parsers = { States.VERTICAL: parse_vertical_line,
                 States.UNIT    : parse_unit_line,
@@ -974,22 +944,52 @@ proc ignoreKey(self:ObjLoader) = echo fmt"ignore key '{self.key}"
 
 #------------------------------------------------------
 
-proc load(self:ObjLoader; objFileAbsPath:string; debug=1) =
-    if debug >= 1: echo fmt"loading: check:{self.check}, swapVertYZ:{self.swapVertYZ}, swapNormYZ:{self.swapNormYZ}, flipU:{self.flipU}, flipV:{self.flipV}"
+proc parseObjFile*(self:ObjLoader; objFileAbsPath:string; check=false; debug=1, dbgDecountReload=0): bool =
+    # Load Wavefront OBJ
+
+    if not fileExists(objFileAbsPath):
+        echo fmt"ERROR '{objFileAbsPath}' not found"
+        assert false
+        return false
+
+    let (path, name, ext) = splitFile(objFileAbsPath)
+    self.absPath = path
+    self.objFile = name & ext
+
+    self.o_eq_g      = true # treat 'o' as 'g'
+    #self.texPathFile = Obj3D_path & model.texPathFile
+    #self.ignoreObjs  = model.ignoreObjs
+    self.check       = check
+    self.dbgDecountReload = dbgDecountReload
+
+    #[
+    self.allVerts = list()
+    self.allNorms = list()
+    self.allUvtxs = list()
+    self.allCouls = list()
+    ]#
+    #self.matTplLib = nil
+
+    self.objMgr = newObjsManager(parent=self, check=check) #, ignoreTexture=ignoreTexture, debugTextureFile=debugTextureFile
+
+    #echo fmt"ObjLoader: {result}"
+    #[
+    self.parseObjFile(objFileAbsPath, debug)
+
+    return true
+
+    ]#
+
+    if debug >= 1: echo fmt"loading: check:{self.check}"
 
     self.debug = debug
     self.errorsCount = 0
 
-    var time0, dt : float
-
     time0 = cpuTime()
 
-    if debug >= 2: echo fmt"------------- loading: rescale at +-1.0:{self.normalize}, debug:{self.debug}, file: {self.objFile} :" #ignoreTexture:{self.ignoreTexture}
-    #with open(Obj3D_path & self.objPathFile,'r') as f:
     let text: string = readFile(objFileAbsPath).string
     let lines = splitLines(text)
     if debug >= 2: echo fmt"{lines.len} lines read"
-    #let parsers = { States.MTLIB : toto }.toTable
 
     self.state = States.INIT
     var line, comment: string
@@ -1033,17 +1033,9 @@ proc load(self:ObjLoader; objFileAbsPath:string; debug=1) =
         self.key    = tokens[0].toLower
         self.tokens = tokens[1 ..^ 1]
 
-        var nextState: States
-        if false:
-            let keyActions = stateChanges[self.state]
-            if not self.key.in(keyActions): self.printStatus(abort=true)
-            nextState = keyActions[self.key]
-            if nextState == IGNORE: continue
-            self.changeState = nextState != NoChg
-        else:
-            if not self.key.in(nameToState): self.printStatus(abort=true)
-            nextState = nameToState[self.key]
-            self.changeState = nextState != self.state
+        if not self.key.in(nameToState): self.printStatus(abort=true)
+        let nextState = nameToState[self.key]
+        self.changeState = nextState != self.state
 
         if self.changeState:
             self.dbgDecount = self.dbgDecountReload
@@ -1056,7 +1048,7 @@ proc load(self:ObjLoader; objFileAbsPath:string; debug=1) =
             let parseProc = parsers[self.state]
             self.parseProc()
 
-    dt = cpuTime() - time0
+    let dt = cpuTime() - time0
 
     var nAllTris, nAllQuads : int
     for name, grp in pairs(self.objMgr.groups):
@@ -1074,22 +1066,51 @@ proc load(self:ObjLoader; objFileAbsPath:string; debug=1) =
 
     time0 = cpuTime() # -------------------------------------
 
+    return true
+
+
+proc flipUV_inpl*(uvs: var seq[Vec2f]; flipUV=[false, false]) = # InPlace
+    for f2 in uvs.mitems :    # or mitems(verts):
+        for i in 0 ..< 2:
+            if not (0.0 <= f2[i] and f2[i] <= 1.0) :
+                #echo fmt"lin{self.lineIdx:6}:'{self.lineRead}': u or v not in 0.0 .. 1.0 -> corrected"
+                f2[i] = max(0.0, min(1.0,f2[i]))
+            if flipUV[i]: f2[i] = 1.0 - f2[i]
+
+proc rotX90_inpl*(xyzs: var seq[Vec3f]) = # InPlace
+    for f3 in xyzs.mitems:
+        (f3[1], f3[2]) = (f3[2], -f3[1]) # (x, y, z)  = (x, z, -y)
+
+proc rotX270_inpl*(xyzs: var seq[Vec3f]) = # InPlace
+    for f3 in xyzs.mitems:
+        (f3[1], f3[2]) = (-f3[2], f3[1]) # (x, y, z)  = (x, z, -y)
+
+proc normalizeModel*(self: ObjLoader;
+                debugTextureFile="",
+                normalize=true, swapVertYZ=false, swapNormYZ=false,
+                flipU=false, flipV=false, check=false,
+                debug=1
+               ): bool =
+
+    self.debugTextureFile = debugTextureFile
+
+    flipUV_inpl(self.allUvtxs, flipUV=[flipU, flipV])
+
+    echo fmt">>>>>>>>>>>>>>>>> swapYZ: vert: {swapVertYZ}, norm: {swapNormYZ}"
+    if swapVertYZ : rotX90_inpl(self.allVerts)
+    if swapNormYZ : rotX90_inpl(self.allNorms)
+
     let (xyzsMin, xyzsMax) = xyzsMinMax(self.allVerts)
     let dims   =  xyzsMax - xyzsMin
     let center = (xyzsMax + xyzsMin) / 2
 
     if debug >= 3: echo fmt"xyzsMin :{xyzsMin}, xyzsMax :{xyzsMax}, center :{center}, dims :{dims}"
 
-    if self.normalize:
+    if normalize:
         let boxDims = vec3f(2.0, 2.0, 2.0)
         let boxPos  = vec3f(0.0, 1.0, 0.0)
         #echo fmt"Put in box of dims:{boxDims} at position:{boxPos})"
 
-        #[
-        var xyzScale: Vec3f
-        for d1, d2, s in items2in1out(dims, boxDims, xyzScale):
-            s[] = d2 / d1
-        ]#
         let xyzScale = boxDims / dims
         let scale = xyzScale.min
 
@@ -1097,78 +1118,25 @@ proc load(self:ObjLoader; objFileAbsPath:string; debug=1) =
 
         let (xyzsMin2, xyzsMax2) = xyzsMinMax(self.allVerts)
 
-        #[
-        var dims2, center2 : Vec3f
-        for vmax, vmin, d, c in items2in2out(xyzsMax2, xyzsMin2, dims2, center2):
-            d[] =  vmax - vmin
-            c[] = (vmax + vmin) / 2
-        ]#
         let dims2   =  xyzsMax2 - xyzsMin2
         let center2 = (xyzsMax2 + xyzsMin2) / 2
 
         if debug >= 3: echo fmt"xyzsMin2:{xyzsMin2}, xyzsMax2:{xyzsMax2}, center2:{center2}, dims2:{dims2}"
         if debug >= 3: echo fmt"recentred and scaled by {scale:.3f} to fit in box scale"
 
-    dt = cpuTime() - time0  # -------------------------------------
+    let dt = cpuTime() - time0  # -------------------------------------
     if debug >= 2: echo "rescale {self.allVerts.len:6d} vertex in -1.0 .. +1.0 in {dt:7.3f} s"
 
-    self.objMgr.checkGrps(debug=0)
+    self.objMgr.checkGrps(debug=1)
 
     if self.debug >= 1: echo fmt"------------- loaded: debug: {self.debug}, file: {self.objFile} :"
     #quit() # **********************************************************
+    return true
 
 proc newObjLoader*(): ObjLoader =
     result = new ObjLoader
     result.vertical = Axis.Y
     result.unit     = 1.0f
-
-proc loadModel*(self: ObjLoader;
-                objFileAbsPath: string;
-                ignoreTexture=false,
-                debugTextureFile="",
-                normalize=true, swapVertYZ=false, swapNormYZ=false,
-                flipU=false, flipV=false, check=false,
-                debug=1, dbgDecountReload=0
-               ): bool =
-    # Load Wavefront OBJ
-
-    self.debugTextureFile = debugTextureFile
-
-    if not fileExists(objFileAbsPath):
-        echo fmt"ERROR '{objFileAbsPath}' not found"
-        assert false
-        return false
-
-    let (path, name, ext) = splitFile(objFileAbsPath)
-    self.absPath = path
-    self.objFile = name & ext
-
-    self.o_eq_g      = true # treat 'o' as 'g'
-    #self.texPathFile = Obj3D_path & model.texPathFile
-    self.normalize   = normalize # model.normalize
-    #self.ignoreObjs  = model.ignoreObjs
-    self.check       = check
-    self.swapVertYZ  = swapVertYZ
-    self.swapNormYZ  = swapNormYZ
-    self.flipU       = flipU
-    self.flipV       = flipV
-    self.dbgDecountReload = dbgDecountReload
-
-    #[
-    self.allVerts = list()
-    self.allNorms = list()
-    self.allUvtxs = list()
-    self.allCouls = list()
-    ]#
-    #self.matTplLib = nil
-
-    self.objMgr = newObjsManager(parent=self, ignoreTexture=ignoreTexture, debugTextureFile=debugTextureFile, check=check)
-
-    #echo fmt"ObjLoader: {result}"
-
-    self.load(objFileAbsPath, debug)
-
-    return true
 
 proc selectGroups*(self: ObjLoader; grpsToInclude: seq[string]= @[], grpsToExclude: seq[string]= @[]): seq[string] =
      return self.objMgr.selectGroups(grpsToInclude, grpsToExclude)
