@@ -88,10 +88,10 @@ type
         mtl     : OBJL.MaterialTmpl
         mapKaId, mapKdId, mapKsId : GLuint # texure_id
 
-proc `$`(self: Obj3D): string =
+func `$`(self: Obj3D): string =
     result = fmt"{self.name:16}: speed:{self.speed}, pos:{self.pos}, dxyzRot:{self.dxyzRot}, xyzRot:{self.xyzRot}"
 
-proc toStr(self: Obj3D): string =
+func toStr(self: Obj3D): string =
     result = fmt"Obj3D {self}:"
     result &= NL & fmt"    mtl: {self.mtl}"
     for child in self.children:
@@ -393,6 +393,8 @@ type
         frames*         : int
         polygDisp*      : PolygonDisplay
         rgbaMask        : Vec4f
+        lightPos*       : Vec3f
+        lightPower*     : float32
         camer*          : Obj3D
         obj3Ds*         : seq[Obj3D]
         obj3dSel        : Obj3D
@@ -421,17 +423,16 @@ type
         nVert, nNorm, nUvts, nTriangles : int
         uMVP, uV, uM : NGL.GLint
         uColor : NGL.GLint
-        light_id, rgbaMask_id, useTextures_id : NGL.GLint
+        lightPos_id, lightPower_id, rgbaMask_id, useTextures_id : NGL.GLint
         textureLoc0 : NGL.GLint
         mesh        : Mesh
         transpose   : GLboolean
         #frames      : int
         bg_color    : Vec3f
-        lightPos    : Vec3f
         bufferAttrIdList: seq[BufferParams]
         #grps_range     : seq[OBJL.GrpRange]
 
-proc `$`*(self: Params): string =
+func `$`*(self: Params): string =
     result = fmt"Params: frames: {self.frames}"
     result &= ", model: "
     result &= self.modelFileName
@@ -484,14 +485,23 @@ proc prepareBufs( self: MyGLArea; modelFile: string,
             ver*, nor*, uvt* : seq[float32]
             idx* : seq[uint32]
     ]#
-    let normOk = OBJL.normalizeModel( objLoader,
-                                      #debugTextureFile="",
-                                      normalize=normalize,
-                                      #swapVertYZ=swapVertYZ, swapNormYZ=swapNormYZ,
-                                      swapVertYZ=true, swapNormYZ=true,
-                                      flipU=flipU, flipV=flipV, check=check,
-                                      debug=1)
-    if not normOk : return
+    var vertSwapYZ, normSwapYZ : bool
+    if   objLoader.vertical == OBJL.Axis.Z:
+        vertSwapYZ = true
+        normSwapYZ = true
+    elif objLoader.vertical == OBJL.Axis.Y:
+        vertSwapYZ = false
+        normSwapYZ = false
+    else:
+        vertSwapYZ = swapVertYZ
+        normSwapYZ = swapVertYZ
+
+    OBJL.normalizeModel( objLoader, check=check,
+                        normalize=normalize,
+                        unit = objLoader.unit,
+                        swapVertYZ=vertSwapYZ, swapNormYZ=swapNormYZ,
+                        flipU=flipU, flipV=flipV,
+                        debug=3)
 
     objGL.bufs = OBJL.loadOglBufs(objLoader, debug=1)
 
@@ -524,7 +534,7 @@ proc addModel(self: MyGLArea; modelFile:string) = # model: OBJM.Model) =
     let normalize  = true  # model.normalize
     let swapVertYZ = false # model.swapYZ
     let swapNormYZ = false # model.swapYZ
-    let obj3d = self.prepareBufs(modelFile, flipV=true, normalize=normalize, swapVertYZ=swapVertYZ, swapNormYZ=swapNormYZ, debugTextureFile=parms.debugTextureFile, debug=2)
+    let obj3d = self.prepareBufs(modelFile, flipV=true, normalize=normalize, swapVertYZ=swapVertYZ, swapNormYZ=swapNormYZ, debugTextureFile=parms.debugTextureFile, debug=1)
     if obj3d == nil:
         echo "!!!!!!!!!!!!!!!!!!!!!! Cannot load model: ", modelFile
         return
@@ -668,8 +678,9 @@ proc on_realize(self: MyGLArea) =
     # create OpenGl buffer and fill it with objGL.bufs.uvt
     glGenBuffers(1, objGL.mesh.uvt.addr)
 
-    objGL.lightPos = vec3(1.0'f32, 4.0'f32, 3.0'f32)
-    parms.rgbaMask = vec4(1.0'f32 ,1.0'f32 ,1.0'f32, 1.0'f32)
+    parms.lightPower = 20000.0'f32 # proportional to square of dist
+    parms.lightPos   = vec3(30.0'f32, 100.0'f32, 50.0'f32) # sun at 100 meters
+    parms.rgbaMask   = vec4(1.0'f32 ,1.0'f32 ,1.0'f32, 1.0'f32)
 
     glUseProgram(objGL.progId)
 
@@ -678,8 +689,11 @@ proc on_realize(self: MyGLArea) =
     objGL.uM   = glGetUniformLocation(objGL.progId, "M")
     #echo fmt"Got handle for uniforms: MVP: {objGL.uMVP}, V: {objGL.uV}, M: {objGL.uM}"
 
-    objGL.light_id = glGetUniformLocation(objGL.progId, "LightPosition_worldspace");
-    #echo "Got handle for uniform LightPosition : ", objGL.light_id
+    objGL.lightPos_id = glGetUniformLocation(objGL.progId, "LightPosition_worldspace");
+    #echo "Got handle for uniform LightPosition : ", objGL.lightPos_id
+
+    objGL.lightPower_id = glGetUniformLocation(objGL.progId, "LightPower");
+    #echo "Got handle for uniform LightPosition : ", objGL.lightPower_id
 
     objGL.rgbaMask_id = glGetUniformLocation(objGL.progId, "rgbaMask")
     #echo "Got handle for uniform 'rgbaMask'  : ", objGL.rgbaMask_id
@@ -809,7 +823,8 @@ proc on_render(self: MyGLArea; context: gdk.GLContext): bool = # ; user_data: po
     #glUniformMatrix4fv(location: GLint, count: GLsizei, transpose: GLboolean, value: ptr GLfloat): void
     glUniformMatrix4fv(objGL.uV, count1, objGL.transpose, v.caddr) # View
 
-    glUniform3f(objGL.light_id, objGL.lightPos.x, objGL.lightPos.y, objGL.lightPos.z)
+    glUniform3f(objGL.lightPos_id, parms.lightPos.x, parms.lightPos.y, parms.lightPos.z)
+    glUniform1f(objGL.lightPower_id, parms.lightPower)
 
     glUniform4f(objGL.rgbaMask_id, parms.rgbaMask[0], parms.rgbaMask[1], parms.rgbaMask[2], parms.rgbaMask[3])
 
@@ -892,7 +907,7 @@ proc invalidateCb(self: MyGLArea): bool =
     self.queueRender() # queueDraw
     return SOURCE_CONTINUE
 
-proc `$`(event: gdk.EventKey): string =
+func `$`(event: gdk.EventKey): string =
     var keyCode : uint16
     assert event.keycode(keyCode) # get the code and check return is ok
     result = fmt"keycode: {keyCode:3}, 0x" & keyCode.int32.tohex(4)

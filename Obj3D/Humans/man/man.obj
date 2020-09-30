@@ -1,6 +1,7 @@
 # MakeHuman exported OBJ
 # www.makehuman.org
-
+vertical y
+unit 1.0
 mtllib man.mtl
 v 0.0028 1.7897 0.0978
 v 0.0068 1.7898 0.0982

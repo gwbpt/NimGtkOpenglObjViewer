@@ -24,13 +24,14 @@ uniform vec3 LightPosition_worldspace;
 uniform vec4 rgbaMask;
 uniform bool useTextures;
 //uniform ivec3 toto3;
+uniform float LightPower;
 
 void main(){
 
 	// Light emission properties
 	// You probably want to put them as uniforms
 	vec4 LightColor = vec4(1,1,1,1);
-	float LightPower = 25.0f;
+	float LightPower2 = LightPower * 1.0f;
 
 
   vec4 black  = vec4(0.0, 0.0, 0.0, 1.0);
@@ -95,12 +96,12 @@ void main(){
 	float cosAlpha = clamp( dot( E,R ), 0,1 );
 
 	vec4 color4 = MaterialAmbientColor  + // Ambient : simulates indirect lighting
-		            MaterialDiffuseColor  * LightColor * LightPower * cosTheta        / (distance*distance) +
-		            MaterialSpecularColor * LightColor * LightPower * pow(cosAlpha,5) / (distance*distance);
+		            MaterialDiffuseColor  * LightColor * LightPower2 * cosTheta        / (distance*distance) +
+		            MaterialSpecularColor * LightColor * LightPower2 * pow(cosAlpha,2) / (distance*distance);
 
   vec4 colorMasked4 = color4 * rgbaMask;
 
   //if(colorMasked4.a < 0.1) discard;// alpha threshold for tranparency
 
-  gl_FragColor = color4 ;
+  gl_FragColor = colorMasked4 ;
 }

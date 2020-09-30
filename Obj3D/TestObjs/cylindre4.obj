@@ -1,4 +1,6 @@
 # cylindre texture gwb
+vertical y
+unit 1.0
 mtllib cylindre4.mtl
 v 0.000 -0.500 0.000
 v 0.000 0.500 0.000

@@ -48,7 +48,7 @@ const IdxNone*: Idx = Idx.high # 0xffffffff = None
 proc `$`*(idx:Idx): string =
     result = if idx == IdxNone: "IdxNone" else: fmt"{idx:4}"
 
-func parseIdx*(s:string):Idx     = parseInt(s).Idx
+func parseIdx*(s:string):Idx = parseInt(s).Idx
 
 proc `$`*(i3:Idx3): string =
     result = fmt"({i3[0]}, {i3[1]}, {i3[2]})"
@@ -108,18 +108,18 @@ proc `[]`(self:SeqIdx3FastFind, idx:Idx): Idx3 =
 #from sugar import collect
 
 func normalTriangle(vert3: array[3, Vec3f]; debug=0): Vec3f =
-    #if debug >= 2: echo fmt"normalTriangle: vert3: {vert3}"
+    if debug >= 2: debugEcho fmt"normalTriangle: vert3: {vert3}"
     let v2 = vert3[2] - vert3[0]
     let v1 = vert3[1] - vert3[0]
-    #if debug >= 3: echo fmt"normalTriangle: v1:{v1}, v2:{v2}"
+    if debug >= 3: debugEcho fmt"normalTriangle: v1:{v1}, v2:{v2}"
     let vProd = cross(v1, v2)
     let length = length(vProd)
     result = vdiv(vProd, length)
-    #if debug >= 1: echo fmt"normalTriangle: {result}"
+    if debug >= 1: debugEcho fmt"normalTriangle: {result}"
 
-proc print2d(datas2d:seq[Idx3], title="", debug=1) =
+func print2d(datas2d:seq[Idx3], title="", debug=1) =
     if debug <= 0: return
-    echo fmt"{datas2d.len:6} {title}"
+    debugEcho fmt"{datas2d.len:6} {title}"
     if debug >= 2:
         let firstChar = title[0]
         #[
@@ -133,9 +133,9 @@ proc print2d(datas2d:seq[Idx3], title="", debug=1) =
             echo "    {}%06d: {}"%(firstChar, i, datas2d[i]))
         ]#
 
-proc print2d(datas2d:seq[Vec2f], title="", debug=1) =
+func print2d(datas2d:seq[Vec2f], title="", debug=1) =
     if debug <= 0: return
-    echo fmt"{datas2d.len:6} {title}"
+    debugEcho fmt"{datas2d.len:6} {title}"
     if debug >= 2:
         let firstChar = title[0]
         let n = datas2d.len
@@ -149,9 +149,9 @@ proc print2d(datas2d:seq[Vec2f], title="", debug=1) =
             echo "    {}%06d: {}"%(firstChar, i, datas2d[i]))
         ]#
 
-proc print2d(datas2d:seq[Vec3f], title="", debug=1) =
+func print2d(datas2d:seq[Vec3f], title="", debug=1) =
     if debug <= 0: return
-    echo fmt"{datas2d.len:6} {title}"
+    debugEcho fmt"{datas2d.len:6} {title}"
     if debug >= 2:
         let firstChar = title[0]
         let n = datas2d.len
@@ -219,7 +219,7 @@ type
         mtls* : OrderedTable[string, MaterialTmpl]
 
 
-proc `$`*(o:MaterialTmpl): string =
+func `$`*(o:MaterialTmpl): string =
     if o == nil :
         result = "MaterialTmpl nil"
     else:
@@ -233,12 +233,12 @@ proc `$`*(o:MaterialTmpl): string =
         if o.mapKd.len > 0: result &= NLT & fmt"mapKd:'{o.mapKd}'"
         if o.mapKs.len > 0: result &= NLT & fmt"mapKs:'{o.mapKs}'"
 
-proc `$`*(o:MatTmplLib): string =
+func `$`*(o:MatTmplLib): string =
     result = fmt"MaterialTmplLib: from file:'{o.mtlPathFile}':"
     for name, mtl in pairs(o.mtls):
         result &= NLT & $mtl
 
-proc newMaterialTmpl(name:string): MaterialTmpl =
+func newMaterialTmpl(name:string): MaterialTmpl =
     result = new MaterialTmpl
     result.name = name
     result.Ka = WHITE
@@ -248,20 +248,20 @@ proc newMaterialTmpl(name:string): MaterialTmpl =
 proc parseMaterialTmplFile(mtlPath, mtlFileName :string): MatTmplLib =
     let mtlPathFile = joinPath(mtlPath, mtlFileName)
 
-    #echo fmt"reading mtlPathFile:'{mtlPathFile}'"
+    #debugEcho fmt"reading mtlPathFile:'{mtlPathFile}'"
     let txt: string = readFile(mtlPathFile).string
 
     result = new MatTmplLib
     #result.mtls = initTable[string, MaterialTmpl]() # () is important = dict()
 
     result.mtlPathFile = mtlPathFile
-    # echo fmt"parseMaterialTmplFile from {result.mtlPathFile}"
+    # debugEcho fmt"parseMaterialTmplFile from {result.mtlPathFile}"
 
     let mtlLines = txt.splitLines()
     var name: string
     for i, rawLine in pairs(mtlLines):
         let line = rawLine.strip()
-        #echo fmt"line{i:03d}: {line}"
+        #debugEcho fmt"line{i:03d}: {line}"
         if line.len == 0 or line[0] == '#': continue
 
         let toks = line.split()
@@ -282,14 +282,14 @@ proc parseMaterialTmplFile(mtlPath, mtlFileName :string): MatTmplLib =
                 elif car == 'd': result.mtls[name].mapKd = fullFileName
                 elif car == 's': result.mtls[name].mapKs = fullFileName
                 else:
-                    echo fmt"mapK{car} not take in account !!!!"
+                    debugEcho fmt"mapK{car} not take in account !!!!"
         #[
         if newmtl is not None:
             newmtl.analyse()
             echo "ooooooooooooooo %d textureGenerated"%textureutils.nbTextureGenerated)
             echo "resultat analyse newmtl:", newmtl)
         ]#
-    echo fmt"read {mtlPathFile} -> :\p", result
+    debugEcho fmt"read {mtlPathFile} -> :\p", result
 
 #-------------------------------------------------------------------------------
 
@@ -342,8 +342,8 @@ type
         debug      : int
         check, o_eq_g : bool
         selMtl     : string
-        vertical   : Axis # Y or Z
-        unit       : float32 # default = 1.0
+        vertical*  : Axis # Y or Z
+        unit*      : float32 # default = 1.0
         ignoreObjs : seq[string]
         allVerts   : seq[Vec3f]
         allNorms   : seq[Vec3f]
@@ -358,7 +358,7 @@ type
         changeState: bool
         lineRead   : string
 
-proc `$`*(self: Group): string =
+func `$`*(self: Group): string =
     #let prevName = if self.prevGrp == nil: "None" else: self.prevGrp.name
     result = fmt"Group:{self.name:21}: {self.typ}, debug:{self.debug}, check:{self.check:5}, ignoreTexture:{self.ignoreTexture:5}, debugTextureFile:'{self.debugTextureFile}'"
     result &= fmt", usemtl:{self.usemtl:19}"
@@ -371,9 +371,9 @@ proc `$`*(self: Group): string =
     else:
         result &= fmt", {n_v:6} verts, {n_n:6} norms, {n_u:6} uvtxs"
 
-proc printFull(self: Group, debug=0): string =
+func printFull(self: Group, debug=0): string =
     #echo self
-    echo "printFull not implemented !"
+    debugEcho "printFull not implemented !"
     #print2d(self.faces_vunIdxs_index , "faces_vunIdxs_index" , debug=debug)
 
 
@@ -602,7 +602,7 @@ proc newObjsManager(parent:ObjLoader; debugTextureFile="", ignoreTexture=false, 
 
     result.init_uvs_of_default_texture()
 
-proc `$`*(self: ObjsManager): string =
+func `$`*(self: ObjsManager): string =
     result = "ObjsManager.groups:"
     for name, grp in pairs(self.groups):
         assert grp.name == name
@@ -641,17 +641,17 @@ type
         rgMtls: RangMtls
         vnuMrgd: VnuMerged
 
-proc `$`*(o:GrpRange): string =
+func `$`*(o:GrpRange): string =
     result = fmt"GrpRange: '{o.name}', mtl:'{o.mtl}', idx0:{o.idx0:6}, idx1:{o.idx0:6}"
 
-proc `$`*(o:RangMtls): string =
+func `$`*(o:RangMtls): string =
     result = fmt"RangMtls: {o.len} elems:"
     for e in o : result &= NL & $e
 
-proc `$`*(o:VnuMerged): string =
+func `$`*(o:VnuMerged): string =
     result = fmt"{o.verts.len} verts, {o.norms.len} norms, {o.uvtxs.len} uvtxs"
 
-proc `$`*(o:GroupMerged): string =
+func `$`*(o:GroupMerged): string =
     result = fmt"{o.rgMtls}, {o.vnuMrgd}"
 
 #---------------------------------------------
@@ -659,32 +659,32 @@ proc `$`*(o:GroupMerged): string =
 const jpgExt = ["png", "jpg", "jpeg"]
 # os.changeFileExt(filename, ext: string)
 
-proc textureFileExist(fileName: string): bool =
+func textureFileExist(fileName: string): bool =
     if fileExists(fileName):
         result = true
     else:
-        echo fileName & " not exists"
+        debugEcho fileName & " not exists"
         let nameExt = fileName.rsplit('.', 1)
         var (name, ext) = (nameExt[0], nameExt[1])
         let fileWithOtherExt = name & ".*"
         if fileExists(fileWithOtherExt):
-            echo fileName & " not exists but " & fileWithOtherExt & " exists*"
+            debugEcho fileName & " not exists but " & fileWithOtherExt & " exists*"
             result = true
-        else: echo fileWithOtherExt & " not exists !!!!!!"
+        else: debugEcho fileWithOtherExt & " not exists !!!!!!"
 
-proc mergesGroups(self: ObjsManager; groups: seq[string]; debug=0): GroupMerged =
-    echo "----------------- merging groups ..."
+func mergesGroups(self: ObjsManager; groups: seq[string]; debug=0): GroupMerged =
+    debugEcho "----------------- merging groups ..."
     assert len(groups) > 0
     #var firstIdx = 0
     for i, name in pairs(groups):
-        #echo "   merge group '{}'"%name)
+        #debugEcho "   merge group '{}'"%name)
         if i >= 10: break
         let grp = self.groups[name]
         if grp.norms.len == 0:
-            echo fmt"**************** mergesGroups: no norms for {grp}"
+            debugEcho fmt"**************** mergesGroups: no norms for {grp}"
             continue
         if grp.uvtxs.len == 0:
-            echo fmt"**************** mergesGroups: no uvtxs for {grp}"
+            debugEcho fmt"**************** mergesGroups: no uvtxs for {grp}"
             continue
         var grpRng: GrpRange
         grpRng.name = name
@@ -697,7 +697,7 @@ proc mergesGroups(self: ObjsManager; groups: seq[string]; debug=0): GroupMerged 
         result.vnuMrgd.norms &= grp.norms
         result.vnuMrgd.uvtxs &= grp.uvtxs
 
-        echo "mergesGroups: add: ", grpRng
+        debugEcho "mergesGroups: add: ", grpRng
         result.rgMtls.add(grpRng)
 
     #return grps_verts, grps_norms, grps_uvtxs, grps_range, texFilesToLoad
@@ -735,21 +735,21 @@ proc checkGrps(self:ObjsManager, debug=1) =
 
 #------------------------------- class ObjLoader ---------------------------------
 
-proc `$`*(self:ObjLoader): string =
+func `$`*(self:ObjLoader): string =
     return fmt"absPath: {self.absPath}, objFile: {self.objFile}, mtl:{self.matTplLib}, objMgr:{NL}   {self.objMgr}"
 
-proc getVert(self:ObjLoader, idx: int): Vec3f =
+func getVert(self:ObjLoader, idx: int): Vec3f =
     if idx < len(self.allVerts):
         return self.allVerts[idx]
-    echo "!!!!!!!! getVert: idx:{idx} >= len(verts):{self.allVerts.len} !!!!!"
+    debugEcho "!!!!!!!! getVert: idx:{idx} >= len(verts):{self.allVerts.len} !!!!!"
     quit()
     #return None
 
-proc getNorm(self:ObjLoader, idx: int): Vec3f =
+func getNorm(self:ObjLoader, idx: int): Vec3f =
     if idx < len(self.allNorms): return self.allNorms[idx]
 
     self.errorsCount += 1
-    echo "errorsCount:{self.errorsCount:3}: getNorm: idx:{idx} >= len(norms):{self.allNorms.len} !!!!!"
+    debugEcho "errorsCount:{self.errorsCount:3}: getNorm: idx:{idx} >= len(norms):{self.allNorms.len} !!!!!"
     if self.errorsCount > 10:
         assert false #quit()
     #return None
@@ -940,7 +940,7 @@ proc printStatus(self:ObjLoader, abort=false) =
     echo fmt"line{self.lineIdx:06d}: {self.state}: key:'{self.key}' : ignored in line:'{self.lineRead.strip()}'{s}"
     if abort : quit()
 
-proc ignoreKey(self:ObjLoader) = echo fmt"ignore key '{self.key}"
+func ignoreKey(self:ObjLoader) = debugEcho fmt"ignore key '{self.key}"
 
 #------------------------------------------------------
 
@@ -1064,10 +1064,11 @@ proc parseObjFile*(self:ObjLoader; objFileAbsPath:string; check=false; debug=1, 
         print2d(self.allCouls , "allCouls" , debug=self.debug)
     echo fmt"-> {nAllTris} Triangles and {nAllTris} Quads -> {nAllTriFaces} triangularFaces in {self.objMgr.groups.len} groups in {dt:7.3f} s"
 
-    time0 = cpuTime() # -------------------------------------
+    time0 = cpuTime()
 
     return true
 
+#-------------------------------------------------------------------------
 
 proc flipUV_inpl*(uvs: var seq[Vec2f]; flipUV=[false, false]) = # InPlace
     for f2 in uvs.mitems :    # or mitems(verts):
@@ -1085,18 +1086,20 @@ proc rotX270_inpl*(xyzs: var seq[Vec3f]) = # InPlace
     for f3 in xyzs.mitems:
         (f3[1], f3[2]) = (-f3[2], f3[1]) # (x, y, z)  = (x, z, -y)
 
-proc normalizeModel*(self: ObjLoader;
-                debugTextureFile="",
-                normalize=true, swapVertYZ=false, swapNormYZ=false,
-                flipU=false, flipV=false, check=false,
-                debug=1
-               ): bool =
+proc unit_inpl*(xyzs: var seq[Vec3f], unit:float32) = # InPlace
+    if unit == 0.0f or unit == 1.0f : return
+    for f3 in xyzs.mitems:
+        for i in 0 ..< 3:
+            f3[i] *= unit
 
-    self.debugTextureFile = debugTextureFile
+proc normalizeModel*(self: ObjLoader; check=false,
+                    normalize=true, unit=0.0f, swapVertYZ=false, swapNormYZ=false,
+                    flipU=false, flipV=false, debug=1 ) =
+    if debug >= 1:
+        echo fmt"normalizeModel name:{self.objFile}, check: {check:5}, normalize: {normalize:5}, unit: {unit:.3f}, swapYZ(Vert,Norm): {(swapVertYZ, swapNormYZ)}, flipUV: {(flipU, flipV)}"
 
     flipUV_inpl(self.allUvtxs, flipUV=[flipU, flipV])
 
-    echo fmt">>>>>>>>>>>>>>>>> swapYZ: vert: {swapVertYZ}, norm: {swapNormYZ}"
     if swapVertYZ : rotX90_inpl(self.allVerts)
     if swapNormYZ : rotX90_inpl(self.allNorms)
 
@@ -1106,32 +1109,27 @@ proc normalizeModel*(self: ObjLoader;
 
     if debug >= 3: echo fmt"xyzsMin :{xyzsMin}, xyzsMax :{xyzsMax}, center :{center}, dims :{dims}"
 
-    if normalize:
+    if unit > 0.0f:
+        self.allVerts.unit_inpl(unit)
+        if debug >= 2: echo fmt"scaled by unit {unit:.3f}"
+    elif normalize:
         let boxDims = vec3f(2.0, 2.0, 2.0)
         let boxPos  = vec3f(0.0, 1.0, 0.0)
         #echo fmt"Put in box of dims:{boxDims} at position:{boxPos})"
-
         let xyzScale = boxDims / dims
         let scale = xyzScale.min
-
         centerScalePos_inpl(self.allVerts, center, scale, boxPos)
+        if debug >= 2: echo fmt"recentred and scaled by {scale:.3f} to fit in box scale"
 
-        let (xyzsMin2, xyzsMax2) = xyzsMinMax(self.allVerts)
-
-        let dims2   =  xyzsMax2 - xyzsMin2
-        let center2 = (xyzsMax2 + xyzsMin2) / 2
-
-        if debug >= 3: echo fmt"xyzsMin2:{xyzsMin2}, xyzsMax2:{xyzsMax2}, center2:{center2}, dims2:{dims2}"
-        if debug >= 3: echo fmt"recentred and scaled by {scale:.3f} to fit in box scale"
+    let (xyzsMin2, xyzsMax2) = xyzsMinMax(self.allVerts)
+    let dims2   =  xyzsMax2 - xyzsMin2
+    let center2 = (xyzsMax2 + xyzsMin2) / 2
+    if debug >= 2: echo fmt"xyzsMin2:{xyzsMin2}, xyzsMax2:{xyzsMax2}, center2:{center2}, dims2:{dims2}"
 
     let dt = cpuTime() - time0  # -------------------------------------
     if debug >= 2: echo "rescale {self.allVerts.len:6d} vertex in -1.0 .. +1.0 in {dt:7.3f} s"
 
     self.objMgr.checkGrps(debug=1)
-
-    if self.debug >= 1: echo fmt"------------- loaded: debug: {self.debug}, file: {self.objFile} :"
-    #quit() # **********************************************************
-    return true
 
 proc newObjLoader*(): ObjLoader =
     result = new ObjLoader
@@ -1165,7 +1163,7 @@ proc indexVBOs*(gMrgd: GroupMerged; debug=1): IndexedBufs =
     # make vnus
 
     let n = gMrgd.vnuMrgd.verts.len
-    if debug >= 3: echo "gMrgd.vnuMrgd.verts.len: ", n
+    if debug >= 3: debugEcho "gMrgd.vnuMrgd.verts.len: ", n
     assert  gMrgd.vnuMrgd.norms.len == n
     assert  gMrgd.vnuMrgd.uvtxs.len == n
 
@@ -1184,7 +1182,7 @@ proc indexVBOs*(gMrgd: GroupMerged; debug=1): IndexedBufs =
         index: uint32
 
     let nVnus = vnus.len
-    if debug >= 3: echo "nVnus: ", nVnus
+    if debug >= 3: debugEcho "nVnus: ", nVnus
 
     result.idx = newSeqUninitialized[uint32](nVnus) # preallocate seq is faster
 
@@ -1195,14 +1193,14 @@ proc indexVBOs*(gMrgd: GroupMerged; debug=1): IndexedBufs =
             inc(nduplicate)
             index = vnuTable[vnu]
         else:
-            if debug >= 3: echo "vnu:{vnu} not in vnuTable:{vnuTable}"
+            if debug >= 3: debugEcho "vnu:{vnu} not in vnuTable:{vnuTable}"
             index = vnuTable.len.uint32
             vnuTable[vnu] = index
         result.idx[i] = index
 
     let nTable = vnuTable.len
-    if debug >= 3: echo "idx.len     : ", result.idx.len
-    if debug >= 3: echo "vnuTable.len: ", vnuTable.len
+    if debug >= 3: debugEcho "idx.len     : ", result.idx.len
+    if debug >= 3: debugEcho "vnuTable.len: ", vnuTable.len
 
     assert nTable + nduplicate == nVnus
 
@@ -1215,7 +1213,7 @@ proc indexVBOs*(gMrgd: GroupMerged; debug=1): IndexedBufs =
         for j in 0 ..< 3: result.ver[i*3+j] = vnu[j].toF32
         for j in 0 ..< 3: result.nor[i*3+j] = vnu[j+3].toF32
         for j in 0 ..< 2: result.uvt[i*2+j] = vnu[j+6].toF32
-        #echo fmt"{i:3}: vun: ", vnu
+        #debugEcho fmt"{i:3}: vun: ", vnu
         inc(i)
 
     let nVerBuf = result.ver.len
@@ -1234,7 +1232,7 @@ proc indexVBOs*(gMrgd: GroupMerged; debug=1): IndexedBufs =
     assert nNorm == nTable
     assert nUvts == nTable
 
-    if debug >= 1: echo fmt"Found {nduplicate} duplicates over {nVnus} => ie new size = {(nVert/nVnus)*100.0:.1f} % of initial size"
+    if debug >= 1: debugEcho fmt"Found {nduplicate} duplicates over {nVnus} => ie new size = {(nVert/nVnus)*100.0:.1f} % of initial size"
 
 
 proc loadOglBufs*(self:ObjLoader; grpsToInclude: seq[string]= @[], grpsToExclude: seq[string]= @[]; debug=1): IndexedBufs =
