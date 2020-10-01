@@ -73,21 +73,24 @@ proc reset(pd: var PolygonDisplay) =
 
 type
     Obj3D = ref object of RootObj
+        no      : int     # start at one
+        id      : string
         name    : string
         parent  : Obj3D
         children: seq[Obj3D]
+        hidden  : bool
+        mtlName : string
 
         pos0, pos : Vec3f # ie glm.Vec3[float32]
         speed  : Vec3f
         xyzRot0, xyzRot : Vec3f
         dxyzRot : Vec3f
 
-        hidden  : bool
         idx0*, idx1*: OBJL.Idx
-        mtlName : string
         mtl     : OBJL.MaterialTmpl
         mapKaId, mapKdId, mapKsId : GLuint # texure_id
 
+#[
 func `$`(self: Obj3D): string =
     result = fmt"{self.name:16}: speed:{self.speed}, pos:{self.pos}, dxyzRot:{self.dxyzRot}, xyzRot:{self.xyzRot}"
 
@@ -96,6 +99,38 @@ func toStr(self: Obj3D): string =
     result &= NL & fmt"    mtl: {self.mtl}"
     for child in self.children:
         result &= NL & fmt"    child: {SQ & child.name & SQ:21}: hidden:{child.hidden}, mtlName:'{child.mtlName}', mapKaId:{child.mapKaId}, mapKdId:{child.mapKdId}, mapKsId:{child.mapKsId}"
+]#
+
+const Obj3dNil: Obj3D = nil
+
+proc newObj3d(parent=Obj3dNil; name="root", hidden=false): Obj3D =
+    result = new Obj3D
+    result.name = name
+    result.hidden = hidden
+    if parent == nil:
+      result.id = "0"
+    else:
+      result.parent = parent
+      result.id = parent.id & '_' & $ parent.children.len
+      parent.children.add(result)
+
+proc `$`(self: Obj3D): string =
+    if self == nil: result = "Obj3dNil"
+    else:
+      result = fmt"id:{self.id:9}: name:{self.name:16}, hidden:{self.hidden}" #: speed:{self.speed}, pos:{self.pos}, dxyzRot:{self.dxyzRot}, xyzRot:{self.xyzRot}"
+      for child in self.children:
+          result &= NL & "    child: " & $child
+
+proc toStr(self: Obj3D): string =
+    result = fmt"Obj3D {self}:"
+    #result &= NL & fmt"    mtl: {self.mtl}"
+    for child in self.children:
+        result &= NL & fmt"    child: {SQ & child.name & SQ:21}: "
+        #, mtlName:'{child.mtlName}', mapKaId:{child.mapKaId}, mapKdId:{child.mapKdId}, mapKsId:{child.mapKsId}"
+
+echo "Obj3dNil: ", Obj3dNil.type, ": ", Obj3dNil
+
+#-----------------------------------------------------
 
 proc accLin(self: Obj3D; idx: int; dv: float32) =
     if dv == 0.0f: # stop vitess
@@ -384,6 +419,11 @@ type KeyCode2NameActionTable* = type(exTable)
 #but tuple (int, tuple of (string, proc (self: Obj3D, idx: int, dv: float32){.gcsafe, locks: 0.}, Obj3D, int, float32))'
 type
     ParamsObj* = object of RootObj
+        allObj3Ds*      : seq[Obj3D] # flat list
+        obj3Ds*         : seq[Obj3D]
+        obj3dSel        : Obj3D
+        tStore          : TreeStore
+        tView           : TreeView
         modelFileName   : string
         debugTextureFile: string
         useTextures     : bool
@@ -396,8 +436,6 @@ type
         lightPos*       : Vec3f
         lightPower*     : float32
         camer*          : Obj3D
-        obj3Ds*         : seq[Obj3D]
-        obj3dSel        : Obj3D
         textureNameToIds: OrderedTable[string, GLuint]
         KeyCod2NamActionObj* : KeyCode2NameActionTable
 
@@ -448,9 +486,307 @@ proc newMyGLArea*(parms: Params): MyGLArea =
     #result.parms = parms
     result.objGL = new ObjsOpengl
 
+
+type # for pack parameters for callbacks of connect
+  LabTxt = tuple
+    l : Label
+    t : string
+
+  SbIdTxt = tuple
+    sb : Statusbar
+    id : int
+    t  : string
+
+  TreeStoreColumn = tuple
+    st  : TreeStore
+    col : int
+
+  TreeViewColumn = tuple
+    tv  : TreeView
+    col : int
+
+  ParmsColumn = tuple
+    parms : Params
+    col   : int
+
+func getObj3d(parms: Params; no: int): Obj3d =
+    if no >= 1 and parms.allObj3Ds.len >= no:
+        result = parms.allObj3Ds[no-1]
+
+
+#-------------------------------------------------------------------------
+
 let parms = new Params # Global var !!!!!!!!!!!!
 
+#-------------------------------------------------------------------------
+
+
+#[ extract from gintro/gobject.nim
+proc g_type_invalid_get_type*(): GType = g_type_from_name("(null)")
+proc g_type_none_get_type*(): GType = g_type_from_name("void")
+proc g_interface_get_type*(): GType = g_type_from_name("GInterface")
+proc g_char_get_type*(): GType = g_type_from_name("gchar")
+proc g_uchar_get_type*(): GType = g_type_from_name("guchar")
+proc g_boolean_get_type*(): GType = g_type_from_name("gboolean")
+proc g_int_get_type*(): GType = g_type_from_name("gint")
+proc g_uint_get_type*(): GType = g_type_from_name("guint")
+proc g_long_get_type*(): GType = g_type_from_name("glong")
+proc g_ulong_get_type*(): GType = g_type_from_name("gulong")
+proc g_int64_get_type*(): GType = g_type_from_name("gint64")
+proc g_uint64_get_type*(): GType = g_type_from_name("guint64")
+proc g_enum_get_type*(): GType = g_type_from_name("GEnum")
+proc g_flags_get_type*(): GType = g_type_from_name("GFlags")
+proc g_float_get_type*(): GType = g_type_from_name("gfloat")
+proc g_double_get_type*(): GType = g_type_from_name("gdouble")
+proc g_string_get_type*(): GType = g_type_from_name("gchararray")
+proc g_pointer_get_type*(): GType = g_type_from_name("gpointer")
+proc g_boxed_get_type*(): GType = g_type_from_name("GBoxed")
+proc g_param_get_type*(): GType = g_type_from_name("GParam")
+proc g_variant_get_type*(): GType = g_type_from_name("GVariant")
+
+atk.nim:proc setCurrentValue*(self: Value | NoOpObject; value: gobject.Value): bool =
+atk.nim:proc setValue*       (self: Value | NoOpObject; newValue: cdouble) =
+proc setBoolean*             (self: Value; vBoolean: bool = true) =
+proc setBoxed*               (self: Value; vBoxed: pointer) =
+proc setBoxedTakeOwnership*  (self: Value; vBoxed: pointer) =
+proc setChar*                (self: Value; vChar: int8) =
+proc setDouble*              (self: Value; vDouble: cdouble) =
+proc setEnum*                (self: Value; vEnum: int) =
+proc setFlags*               (self: Value; vFlags: int) =
+proc setFloat*               (self: Value; vFloat: cfloat) =
+proc setGtype*               (self: Value; vGtype: GType) =
+proc setInstance*            (self: Value; instance: pointer) =
+proc setInt*                 (self: Value; vInt: int) =
+proc setInt64*               (self: Value; vInt64: int64) =
+proc setLong*                (self: Value; vLong: int64) =
+proc setObject*              (self: Value; vObject: Object = nil) =
+proc setParam*               (self: Value; param: ParamSpec = nil) =
+proc setPointer*             (self: Value; vPointer: pointer) =
+proc setSchar*               (self: Value; vChar: int8) =
+proc setStaticBoxed*         (self: Value; vBoxed: pointer) =
+proc setStaticString*        (self: Value; vString: cstring = "") =
+proc setString*              (self: Value; vString: cstring = "") =
+proc setStringTakeOwnership* (self: Value; vString: cstring = "") =
+proc setUchar*               (self: Value; vUchar: uint8) =
+proc setUint*                (self: Value; vUint: int) =
+proc setUint64*              (self: Value; vUint64: uint64) =
+proc setUlong*               (self: Value; vUlong: uint64) =
+proc setVariant*             (self: Value; variant: glib.Variant = nil) =
+
+proc getBoolean*(self: Value): bool =
+proc getBoxed*  (self: Value): pointer =
+proc getChar*   (self: Value): int8 =
+proc getDouble* (self: Value): cdouble =
+proc getEnum*   (self: Value): int =
+proc getFlags*  (self: Value): int =
+proc getFloat*  (self: Value): cfloat =
+proc getGtype*  (self: Value): GType =
+proc getInt*    (self: Value): int =
+proc getInt64*  (self: Value): int64 =
+proc getLong*   (self: Value): int64 =
+proc getObject* (self: Value): Object =
+proc getParam*  (self: Value): ParamSpec =
+proc getPointer*(self: Value): pointer =
+proc getSchar*  (self: Value): int8 =
+proc getString* (self: Value): string =
+proc getUchar*  (self: Value): uint8 =
+proc getUint*   (self: Value): int =
+proc getUint64* (self: Value): uint64 =
+proc getUlong*  (self: Value): uint64 =
+proc getVariant*(self: Value): glib.Variant =
+]#
+
+let
+  gType_invalid  : GType = typeFromName("(null)")
+  gType_none     : GType = typeFromName("void")
+  gType_interface: GType = typeFromName("GInterface")
+  gType_char     : GType = typeFromName("gchar")
+  gType_uchar    : GType = typeFromName("guchar")
+  gType_boolean  : GType = typeFromName("gboolean")
+  gType_int      : GType = typeFromName("gint")
+  gType_uint     : GType = typeFromName("guint")
+  gType_long     : GType = typeFromName("glong")
+  gType_ulong    : GType = typeFromName("gulong")
+  gType_int64    : GType = typeFromName("gint64")
+  gType_uint64   : GType = typeFromName("guint64")
+  gType_enum     : GType = typeFromName("GEnum")
+  gType_flags    : GType = typeFromName("GFlags")
+  gType_float    : GType = typeFromName("gfloat")
+  gType_double   : GType = typeFromName("gdouble")
+  gType_string   : GType = typeFromName("gchararray")
+  gType_pointer  : GType = typeFromName("gpointer")
+  gType_boxed    : GType = typeFromName("GBoxed")
+  gType_param    : GType = typeFromName("GParam")
+  gType_variant  : GType = typeFromName("GVariant")
+
+let str_gtype  = gType_string  # : GType = gStringGetType()
+let bool_gtype = gType_boolean # : GType = gBooleanGetType()
+
+proc toStringVal(s: string): Value =
+  #let gtype = typeFromName("gchararray")
+  discard init(result, gType_string) # gtype)
+  setString(result, s)
+
+#[
+proc toUIntVal(i: int): Value =
+  let gtype = typeFromName("guint")
+  discard init(result, gtype)
+  setUint(result, i)
+]#
+proc toBoolVal(b: bool): Value =
+  #let gtype = typeFromName("gboolean")
+  discard init(result, gType_boolean) # gtype)
+  setBoolean(result, b)
+
+proc toIntVal(i: int): Value =
+  #let gtype = typeFromName("gboolean")
+  discard init(result, gType_int) # gtype)
+  setInt(result, i)
+
+proc toPointerVal(p: pointer): Value =
+  discard init(result, gType_pointer)
+  setPointer(result, p)
+
+
+type
+  Columns = enum
+    ID_COLUMN
+    NAME_COLUMN
+    HIDDEN_COLUMN
+    MTL_COLUMN
+    N_COLUMNS # give the nb of column
+
+var columnTypes  : seq[GType]  = @[gType_int, str_gtype, bool_gtype, str_gtype]
+var columnTitles : seq[string] = @[   "Id"  ,   "Name" ,  "Hidden" , "mtlName"]
+
+#[
+let str_gtype : GType = gStringGetType()
+let int_gtype : GType = gIntGetType()
+let bool_gtype: GType = gBooleanGetType()
+
+proc toStringVal(s: string): Value =
+  let gtype = typeFromName("gchararray")
+  discard init(result, gtype)
+  setString(result, s)
+
+proc toUIntVal(i: int): Value =
+  let gtype = typeFromName("guint")
+  discard init(result, gtype)
+  setUint(result, i)
+
+proc toBoolVal(b: bool): Value =
+  let gtype = typeFromName("gboolean")
+  discard init(result, gtype)
+  setBoolean(result, b)
+]#
+
+# we need the following two procs for now -- later we will not use that ugly cast...
+proc typeTest(o: gobject.Object; s: string): bool =
+  let gt = g_type_from_name(s)
+  return g_type_check_instance_is_a(cast[ptr TypeInstance00](o.impl), gt).toBool
+
+
+proc treeStore(o: gobject.Object): gtk.TreeStore =
+  assert(typeTest(o, "GtkTreeStore"))
+  cast[gtk.TreeStore](o)
+
+#let iterNil = cast[ptr TreeIter](nil)[]
+
+proc loadObj3dInIter(self: TreeStore; obj3d: Obj3D, parent=cast[ptr TreeIter](nil)[]): TreeIter =
+  self.append(result, parent)
+
+  self.setValue(result, ID_COLUMN.int    , obj3d.no.toIntVal) # store Obj3d.no
+  self.setValue(result, NAME_COLUMN.int  , obj3d.name.toStringVal)
+  self.setValue(result, HIDDEN_COLUMN.int, obj3d.hidden.toBoolVal)
+  self.setValue(result, MTL_COLUMN.int   , obj3d.mtlName.toStringVal)
+
+#[
+func treeIterToStr(self: TreeStore; iter: TreeIter): string =
+  var valStr1, valstr2, valBool: Value
+
+  self.getValue(iter, ID_COLUMN.int , valStr1)
+  let id  : string = valStr1.getString()
+
+  self.getValue(iter, NAME_COLUMN.int , valStr2)
+  let name: string = valStr2.getString()
+
+  self.getValue(iter, HIDDEN_COLUMN.int, valBool)
+  let hidden: bool = valBool.getBoolean()
+
+  var value: Value
+  self.getValue(iter, USER_DATA.int, value)
+  let refObj = value.getPointer()
+  #debugEcho "1: p: ", p.repr
+
+  let obj3d: Obj3D = cast[Obj3D](refObj)
+  #debugEcho "1: obj3d.mtlName: ", obj3d.mtlName
+  result =fmt"id: {id}, name: {name}, hidden: {hidden:5}, obj3d.mtlName:{obj3d.mtlName}, obj3d.addr:{refObj.repr}" # refObj.int.toHex(16)
+
+  #debugEcho result
+
+#proc loadObj3dInIter(self: TreeStore; obj3d: Obj3D, parent=cast[ptr TreeIter](nil)[]): TreeIter =
+proc loadObj3dInIter(self: TreeStore; obj3d: Obj3D, parent=cast[ptr TreeIter](nil)[]): TreeIter =
+  self.append(result, parent)
+  self.setValue(result, ID_COLUMN.int   , obj3d.id.toIntVal)
+  self.setValue(result, NAME_COLUMN.int , obj3d.name.toStringVal)
+  #self.setValue(result, HIDDEN_COLUMN.int, obj3d.hidden.toBoolVal)
+
+  let refObj = cast[pointer](obj3d)
+  echo "0: refObj: ", refObj.repr
+  var value = refObj.toPointerVal
+  self.setValue(result, USER_DATA.int, value)
+
+  echo "loadObj3dInIter: ", self.treeIterToStr(result)
+]#
+
+func getObj3d_no(self: TreeStore; iter: TreeIter): int =
+  var value: Value
+  self.getValue(iter, ID_COLUMN.int , value)
+  result = value.getInt()
+
+func getObj3d_name(self: TreeStore; iter: TreeIter): string =
+  var value: Value
+  self.getValue(iter, NAME_COLUMN.int , value)
+  result = value.getString()
+
+func getObj3d_hidden(self: TreeStore; iter: TreeIter): bool =
+  var value: Value
+  self.getValue(iter, HIDDEN_COLUMN.int , value)
+  result = value.getBoolean()
+
+func getObj3d_mtl(self: TreeStore; iter: TreeIter): string =
+  var value: Value
+  self.getValue(iter, MTL_COLUMN.int , value)
+  result = value.getString()
+
+func treeIterToStr(self: TreeStore; iter: TreeIter): string =
+  let no     : int    = self.getObj3d_no(iter)
+  let name   : string = self.getObj3d_name(iter)
+  let hidden : bool   = self.getObj3d_hidden(iter)
+  let mtlName: string = self.getObj3d_mtl(iter)
+
+  result =fmt"no: {no}, name: {name}, hidden: {hidden:5}, mtlName: {mtlName}"
+  #debugEcho result
+
+proc fillTreeStore(store: TreeStore; root: Obj3D) =
+  var rootIter = store.loadObj3dInIter(root)
+  for child in root.children:
+    var childIter = store.loadObj3dInIter(child, rootIter)
+    for gchild in child.children:
+      var gchildIter = store.loadObj3dInIter(gchild, childIter)
+
+func getObj3d(parms: Params; iter: TreeIter): Obj3d =
+    let ts : TreeStore = parms.tStore
+    let no = ts.getObj3d_no(iter)
+    return parms.getObj3d(no)
+
 #------------------------------------------------------
+
+proc newObj3dStoredInScene(parms:Params; parent=Obj3dNil; name="root", hidden=false): Obj3d =
+    result = newObj3d(name=name, hidden=hidden, parent=parent)
+    parms.allObj3Ds.add(result)
+    result.no = parms.allObj3Ds.len
+
 
 proc prepareBufs( self: MyGLArea; modelFile: string,
                   check=false, normalize=true, swapVertYZ=false, swapNormYZ=false, flipU=false, flipV=false,
@@ -475,7 +811,8 @@ proc prepareBufs( self: MyGLArea; modelFile: string,
     ]#
     if not parseOk : return
 
-    result = new Obj3D
+
+    result = newObj3dStoredInScene(parms) # new Obj3D
     result.name = objLoader.objFile
     objGL.matTplLib = objLoader.matTplLib
     #[
@@ -541,12 +878,11 @@ proc addModel(self: MyGLArea; modelFile:string) = # model: OBJM.Model) =
 
     echo fmt"***************** loading textures if not yet for {obj3d.name}: ", $objGL.bufs.rgMtls
     for rgMtl in objGL.bufs.rgMtls:
-        let child = new Obj3d
+        let child = newObj3dStoredInScene(parms, name=rgMtl.name, hidden=false, parent=obj3d) # new Obj3d
         child.name    = rgMtl.name
         child.idx0    = rgMtl.idx0
         child.idx1    = rgMtl.idx1
         child.mtlName = rgMtl.mtl
-        obj3d.children.add(child)
 
         parms.obj3dSel = obj3d # select the last created
 
@@ -559,9 +895,14 @@ proc addModel(self: MyGLArea; modelFile:string) = # model: OBJM.Model) =
 
     parms.obj3Ds.add(obj3d)
 
-    echo ">>>>>>>>>>> obj3Ds: "
+    echo "---------- obj3Ds: ---------"
     for o in parms.obj3Ds:
         echo o.toStr
+    echo "----------------------------"
+
+    echo ">>>>>>>>>>> put obj3d in tree store"
+    #parms.tStore.loadObj3dInIter(obj3d) # root
+    parms.tStore.fillTreeStore(obj3d) # TODO: add scene as root object
 
     if false:
         echo fmt"objGL.bufs.idx: len:{objGL.bufs.idx.len:6}, sizeof:{objGL.bufs.idx.sizeof}"
@@ -1035,17 +1376,6 @@ proc chooseFileObj(): string =
       #echo "accept open: ", result # fileName
   chooser.destroy
 
-
-type
-  LabTxt = tuple
-    l : Label
-    t : string
-
-  SbIdTxt = tuple
-    sb : Statusbar
-    id : int
-    t  : string
-
 proc onClick(b: Button, p:LabTxt) =
   let (l, txt) = p
   echo "click " & txt
@@ -1072,6 +1402,85 @@ proc onWindowDestroy(w: gtk.Window, txt= "") =
 proc onQuitMenuActivate(mi: MenuItem, txt= "") =
   echo "onQuitMenuActivate " & txt
   mainQuit()
+
+
+
+
+proc onRemItem(widget: Button; tv: TreeView) =
+  let selection = tv.selection
+  var store = tv.getModel.treeStore #getListStore(treeView)
+  var iter: TreeIter
+  if not store.getIterFirst(iter):
+      echo "Nothing to remove !"
+      return
+  if selection.getSelected(store, iter):
+    discard store.remove(iter)
+
+proc onRemoveAll(widget: Button; tv: TreeView) =
+  var iter: TreeIter
+  let store = tv.getModel.treeStore
+  if store.getIterFirst(iter):
+    clear(store)
+  else: echo "Nothing to remove !"
+
+proc toggleBool(parms: Params; iter: TreeIter; column: int) =
+    var value: Value
+    parms.tStore.getValue(iter, column, value)
+    var b : bool = not value.getBoolean
+    value.setBoolean( b )
+    parms.tStore.setValue(iter, column, value)
+
+    var obj3d = parms.getObj3d(iter)
+    obj3d.hidden =  b
+
+proc onToggle(crToggle: CellRendererToggle; path: string, p: ParmsColumn) =
+  let (parms, column) = p
+  #var store = tv.getModel.treeStore
+  let treePath: TreePath = newTreePathFromString(path)
+  var iter: TreeIter
+  if parms.tStore.getIter(iter, treePath):
+    echo NL & fmt"before toggle:{path}, iter: " & parms.tStore.treeIterToStr(iter)
+    parms.toggleBool(iter, column)
+    echo fmt"after  toggle:{path}, iter: " & parms.tStore.treeIterToStr(iter)
+
+proc onEdited(crText: CellRendererText; path: string; newText: string; tv: TreeView) =
+  let selection = tv.selection
+  var store = tv.getModel.treeStore
+  var iter: TreeIter
+  if selection.getSelected(store, iter):
+    echo "onEdited: ", path, ", ", newText
+    store.setValue(iter, NAME_COLUMN.int, newText.toStringVal)
+
+proc initTreeStoreAndView(parms : Params) =
+  parms.tView  = newTreeView()
+  parms.tView.setHeadersVisible(true)
+
+  parms.tStore = newTreeStore(nColumns=N_COLUMNS.int, types=columnTypes[0].addr)
+  parms.tView.setModel(parms.tStore) # connect view to store
+
+  for i, title in columnTitles.pairs:
+    let column = newTreeViewColumn()
+    column.title = title
+    if i == HIDDEN_COLUMN.int:
+      let crToggle = newCellRendererToggle()
+      let p: ParmsColumn = (parms, i)
+      crToggle.connect("toggled", onToggle, p)
+      column.packStart(crToggle, true)
+      column.addAttribute(crToggle, "active", i) # "radio"
+    else:
+      let crText   = newCellRendererText()
+      column.packStart(crText, true)
+      column.addAttribute(crText, "text", i) # "text"
+      if i == NAME_COLUMN.int:
+        crText.setProperty("editable", true.toBoolVal)
+        if false: # read back
+          var valBool: Value
+          discard valBool.init(bool_gtype)
+          crText.getProperty("editable", valBool)
+          echo "editable: ", valBool.getBoolean
+        crText.connect("edited", onEdited, parms.tView)
+        #column.addAttribute(crText, "active", i) # "editable-set"
+    discard parms.tView.appendColumn(column)
 
 
 proc main(debugTextureFile="") =
@@ -1134,9 +1543,20 @@ proc main(debugTextureFile="") =
       let HelpMi   = newMenuItemWithLabel("Help")
       menubar.append(HelpMi)
 
+    let hbox = newbox(Orientation.horizontal, spacing=0)
+    vBox.packStart(hbox, expand=true, fill=true, padding=0)
+
+
     let glArea = newMyGLArea(parms) # newGLArea()
     #vBox.add(glArea)
-    vBox.packStart(glArea, expand=true, fill=true, padding=0)
+    hBox.packStart(glArea, expand=true, fill=true, padding=0)
+
+    let rightBox = newBox(Orientation.vertical, 0)
+    hBox.add(rightBox)
+
+    parms.initTreeStoreAndView()
+
+    rightBox.packStart(parms.tView, true, true, 0)
 
     addObjMi.connect("activate", onAddObj, glArea)
 
