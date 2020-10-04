@@ -3,6 +3,8 @@ commonTypes
 gtkOpenglObjVisu
 objLoaderMtl
 objModels
+compileShaders
+loadTexture
 *.sav
 *.logs
 

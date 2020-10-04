@@ -199,238 +199,8 @@ proc resetPos(self: Obj3D; axe=XYZ; dummy=RST) =
 
 # -------------------------------------------------------------------------------------------
 
-import nimPNG
-# let png = loadPNG32("Kangaroo_texture.png")
-# is equivalent to:
-# let png = loadPNG("image.png", LCT_RGBA, 8)
-# will produce rgba pixels:
-# echo fmt"widthxheight: {png.width}x{png.height}"
-# let nPix = png.width * png.height
-#echo fmt"nPix * 4 : {nPix*4}, len: {png.data.len}"
-
-proc bind_texture(texture_id: GLuint; mode="DEFAULT"; debug=1) =
-    #[ Bind texture_id using several different modes
-        Notes:
-            Without mipmapping the texture is incomplete
-            and requires additional constraints on OpenGL
-            to properly render said texture.
-
-            Use 'MIN_FILTER" or 'MAX_LEVEL' to render
-            a generic texture with a single resolution
-        Ref:
-            [] - http://www.opengl.org/wiki/Common_Mistakes#Creating_a_complete_texture
-            [] - http://gregs-blog.com/2008/01/17/opengl-texture-filter-parameters-explained/
-        TODO:
-            - Rename modes to something useful
-    ]#
-    if debug >= 1: echo fmt"bind_texture id:{texture_id}: mode: {mode}"
-    if mode == "DEFAULT":
-        glBindTexture(GL_TEXTURE_2D, texture_id)
-        glPixelStorei(GL_UNPACK_ALIGNMENT,1)
-    elif mode == "MIN_FILTER":
-        glBindTexture(GL_TEXTURE_2D, texture_id)
-        glPixelStorei(GL_UNPACK_ALIGNMENT,1)
-        #glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S    , 1.0) # GL_CLAMP)
-        #glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T    , 1.0) # GL_CLAMP)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST.GLint) #G L_LINEAR)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST.GLint) # GL_LINEAR)
-    elif mode == "MAX_LEVEL":
-        glBindTexture(GL_TEXTURE_2D, texture_id)
-        glPixelStorei(GL_UNPACK_ALIGNMENT,1)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0)
-    else:
-        glBindTexture(GL_TEXTURE_2D, texture_id)
-        glPixelStorei(GL_UNPACK_ALIGNMENT,1)
-
-    glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE.GLint) # to improve transparency
-    glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE.GLint) # to improve transparency
-
-    # Generate mipmaps?  Doesn't seem to work
-    #if 0: glGenerateMipmap(GL_TEXTURE_2D)
-
-const jpgExt = ["jpg", "jpeg"]
-# os.changeFileExt(filename, ext: string)
-
-proc load_image(fileName, mode="MIN_FILTER", debug=1): GLuint = # return texture_id "MIN_FILTER"
-    let nameExt = fileName.rsplit('.', 1)
-    var (name, ext) = (nameExt[0], nameExt[1])
-    if ext.toLowerAscii in jpgExt : ext = "png"
-    let file_png = name & '.' & ext
-    if not fileExists(file_png):
-        echo file_png & " not exists !!!!!!"
-        var file_jpg : string
-        var goodExt = ""
-        for ext in jpgExt:
-            file_jpg = name & '.' & ext
-            if fileExists(file_jpg):
-                goodExt = ext
-                break
-            else:
-                if debug >= 2: echo fmt"{file_jpg} not exist"
-        if goodExt.len == 0:
-            echo fmt"{name} not exists with extension {jpgExt}, !!!!!!!!!!!!!!"
-        else:
-            let cmd = fmt"convert {file_jpg} {file_png}"
-            echo fmt"executing {cmd} ..."
-            let errC = execCmd(cmd)
-            echo fmt"execCmd({cmd}) -> {errC}"
-    if debug >= 2: echo fmt"load texture: {file_png}"
-    let im = loadPNG32(file_png)
-    #[
-    try:
-        width, height, image = im.size[0], im.size[1], im.tobytes("raw", "RGBA", 0, -1)
-    except : # gwb: remove SystemError
-        width, height, image = im.size[0], im.size[1], im.tobytes("raw", "RGBX", 0, -1)
-    ]#
-
-    if debug >= 1: echo fmt"loaded texture: {im.width:d}, {im.height:4}, len(image):{im.data.len:7}"
-
-    var texture_id: GLuint
-    glGenTextures(1, texture_id.addr) # proc glGenTextures(n: GLsizei, textures: ptr GLuint)
-    #echo "glGenTextures: texture_id: ", texture_id
-
-    # To use OpenGL 4.2 ARB_texture_storage to automatically generate a single mipmap layer
-    # uncomment the 3 lines below.  Note that this should replaced glTexImage2D below.
-    #bind_texture(texture_id,'DEFAULT')
-    #glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, width, height);
-    #glTexSubImage2D(GL_TEXTURE_2D,0,0,0,width,height,GL_RGBA,GL_UNSIGNED_BYTE,image)
-
-    # "Bind" the newly created texture : all future texture functions will modify this texture
-    bind_texture(texture_id, mode=mode, debug=debug-1)
-    # glTexImage2D(target: GLenum, level: GLint, internalformat: GLint, width: GLsizei, height: GLsizei, border: GLint, format: GLenum, `type`: GLenum, pixels: pointer)
-
-    let width  = im.width
-    let height = im.height
-    let size   = im.data.len
-    let nPixs  = width * height
-    #echo fmt"Image: width:{width}, height:{height}, nPixs:{nPixs}, im.data.len:{size}"
-    #echo fmt"im.data[0]: {im.data[0].int},  {im.data[1].int},  {im.data[2].int},  {im.data[3].int}"
-
-    if false: # make a square hole in the midle of texture using transparency
-        let
-            x0 = width.div(2)
-            y0 = height.div(2)
-            d = 50
-        var i0, i1 : int
-        for y in y0-d ..< y0+d:
-            i0 = y * (width * 4)
-            for x in x0-d ..< x0+d:
-                i1 = i0 + x*4
-                im.data[i1+0] = 255.char
-                im.data[i1+1] = 255.char
-                im.data[i1+2] = 0.char
-                im.data[i1+3] = 0.char
-    if false: # check texture
-        let
-          dx = 50
-          dy = 25
-        let xM = width.div(dx)
-        let yM = height.div(dy)
-        var s : string
-        var i0, i1 : int
-        #for c in 0 ..< 4:
-            #echo "rgba: ", c
-        for y in 0 ..< yM:
-            i0 = (y*dy) * (width * 4) # + c
-            s = fmt"{y*dy:6}: "
-            for x in 0 ..< xM:
-                i1 = i0 + x* (dx * 4)
-                s &= $im.data[i1].ord.toHex(2) & " " & $im.data[i1+1].ord.toHex(2) & " " & $im.data[i1+2].ord.toHex(2) & " " & $im.data[i1+3].ord.toHex(2) & ", "
-            echo s
-
-    if false:
-        let yC = height.div(2)
-        let xC = width.div(2)
-        var r2 = 256
-        var dx, dy, dx2, dy2: int
-        var i = 0
-        for y in 0 ..< height:
-            dy = y - yC
-            dy2 = dy * dy
-            for x in 0 ..< width:
-                dx = x - xC
-                dx2 = dx * dx
-                if dy2 + dx2 < r2 :
-                    im.data[i]   = 0.char
-                    im.data[i+1] = 0.char
-                    im.data[i+2] = 0.char
-                i += 4
-
-    var ptrPix: pointer = im.data[0].addr
-    #(target: GLenum, level: GLint, internalformat: GLint, width: GLsizei, height: GLsizei, border: GLint, format: GLenum, type: GLenum, pixels: pointer)
-    glTexImage2D(
-           GL_TEXTURE_2D,   # target: GLenum
-           0,               # level: GLint
-           GL_RGBA.GLint,   # internalformat: GLint 3
-           width.GLsizei,   # width : GLsizei
-           height.GLsizei,  # height: GLsizei
-           0,               # border: GLint
-           GL_RGBA,         # format: GLenum # GL_RGBA !!!!!GL_RGB8UI?
-           GL_UNSIGNED_BYTE,# `type`: GLenum
-           ptrPix           # pixels: pointer ?
-       )
-    return texture_id
-
-# ----------------------------------------------------------------------------------------------------
-
-proc statusShader(shader: uint32) =
-    var status: int32
-    glGetShaderiv(shader, GL_COMPILE_STATUS, status.addr);
-    if status != GL_TRUE.ord:
-        echo "statusShader ERROR !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-        if true:
-            var
-                log_length: int32
-                message = newSeq[char](1024)
-            glGetShaderInfoLog(shader, 1024, log_length.addr, message[0].addr);
-            var msg : string
-            for c in message:
-                if c.ord == 0: break
-                msg.add(c)
-            #let msg: string = cast[string](message)
-            echo msg
-        assert false
-
-type Shaders = tuple[vert, frag: uint32]
-
-var isNormalBuf, is_uv_buf: bool
-
-# --------------------------------------------------------------------
-proc createShader(shadersName:string; typ:string; shads: var Shaders) =
-    #echo fmt"createShader('{shadersName}', {typ})"
-    var shadId: uint32
-    if   typ == "vertex":
-        shads.vert = glCreateShader(GL_VERTEX_SHADER)
-        shadId = shads.vert
-    elif typ == "fragmt":
-        shads.frag = glCreateShader(GL_FRAGMENT_SHADER)
-        shadId = shads.frag
-    else:
-        echo fmt"ERROR: unknown shader typ: '{typ}'"
-        assert false
-
-    let fileName: string = fmt"{shadersName}.{typ}"
-    # echo fmt"createShader from '{fileName}':"
-    let text:string = readFile(fileName)
-    #echo "source: " & NL, text
-
-    var cText: cstring = text.cstring
-
-    #glShaderSource(shader: GLuint; count: GLsizei; string: cstringArray; length: ptr GLint) # /opengl-1.2.6
-    #glShaderSource(shadId, 1.GLsizei, cast[cstringArray](cText.addr), nil) # /opengl-1.2.6
-    glShaderSource(shadId, 1, cText.addr, nil)# glShaderSource(shadId, 1, cText.addr, nil) for nimgl-1.1.4
-    glCompileShader(shadId)
-    statusShader(shadId)
-
-#---------------------------------------------------
-proc createShadersName(shadersName:string): Shaders =
-    var shads: Shaders
-
-    createShader(shadersName, "vertex", shads)
-    createShader(shadersName, "fragmt", shads)
-
-    return shads
+import compileShaders
+import loadTexture
 
 # +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
@@ -464,7 +234,7 @@ type
         valLabels       : seq[Label]
         modelFileName   : string
         debugTextureFile: string
-        useTextures     : bool
+        isNormalBuf, is_uv_buf, useTextures: bool
         cullFace        : int
         time, dt        : float
         delta           : float32
@@ -535,15 +305,7 @@ type # for pack parameters for callbacks of connect
     sb : Statusbar
     id : int
     t  : string
-  #[
-  TreeStoreColumn = tuple
-    st  : TreeStore
-    col : int
 
-  TreeViewColumn = tuple
-    tv  : TreeView
-    col : int
-  ]#
   ParmsColumn = tuple
     parms : Params
     col   : int
@@ -587,14 +349,6 @@ type
         parms       : Params
         glArea      : MyGLArea
         obj3dCtrls  : array[nObj3dCtrls, Obj3dControl]
-
-#-------------------------------------------------------------------------
-#let params  = new Params # Global var !!!!!!!!!!!! TO REMOVE
-
-#let guiDat = new GuiDatas # Global var !!!!!!!!!!!!
-#guiDat.parms = params
-
-
 
 #-------------------------------------------------------------------------
 
@@ -736,27 +490,6 @@ type
 var columnTypes  : seq[GType]  = @[gType_int, str_gtype, bool_gtype, str_gtype]
 var columnTitles : seq[string] = @[   "Id"  ,   "Name" ,  "Hidden" , "mtlName"]
 
-#[
-let str_gtype : GType = gStringGetType()
-let int_gtype : GType = gIntGetType()
-let bool_gtype: GType = gBooleanGetType()
-
-proc toStringVal(s: string): Value =
-  let gtype = typeFromName("gchararray")
-  discard init(result, gtype)
-  setString(result, s)
-
-proc toUIntVal(i: int): Value =
-  let gtype = typeFromName("guint")
-  discard init(result, gtype)
-  setUint(result, i)
-
-proc toBoolVal(b: bool): Value =
-  let gtype = typeFromName("gboolean")
-  discard init(result, gtype)
-  setBoolean(result, b)
-]#
-
 # we need the following two procs for now -- later we will not use that ugly cast...
 proc typeTest(o: gobject.Object; s: string): bool =
   let gt = g_type_from_name(s)
@@ -776,45 +509,6 @@ proc loadObj3dInIter(self: TreeStore; obj3d: Obj3D, parent=cast[ptr TreeIter](ni
   self.setValue(result, NAME_COLUMN.int  , obj3d.name.toStringVal)
   self.setValue(result, HIDDEN_COLUMN.int, obj3d.hidden.toBoolVal)
   self.setValue(result, MTL_COLUMN.int   , obj3d.mtlName.toStringVal)
-
-#[
-func treeIterToStr(self: TreeStore; iter: TreeIter): string =
-  var valStr1, valstr2, valBool: Value
-
-  self.getValue(iter, ID_COLUMN.int , valStr1)
-  let id  : string = valStr1.getString()
-
-  self.getValue(iter, NAME_COLUMN.int , valStr2)
-  let name: string = valStr2.getString()
-
-  self.getValue(iter, HIDDEN_COLUMN.int, valBool)
-  let hidden: bool = valBool.getBoolean()
-
-  var value: Value
-  self.getValue(iter, USER_DATA.int, value)
-  let refObj = value.getPointer()
-  #debugEcho "1: p: ", p.repr
-
-  let obj3d: Obj3D = cast[Obj3D](refObj)
-  #debugEcho "1: obj3d.mtlName: ", obj3d.mtlName
-  result =fmt"id: {id}, name: {name}, hidden: {hidden:5}, obj3d.mtlName:{obj3d.mtlName}, obj3d.addr:{refObj.repr}" # refObj.int.toHex(16)
-
-  #debugEcho result
-
-#proc loadObj3dInIter(self: TreeStore; obj3d: Obj3D, parent=cast[ptr TreeIter](nil)[]): TreeIter =
-proc loadObj3dInIter(self: TreeStore; obj3d: Obj3D, parent=cast[ptr TreeIter](nil)[]): TreeIter =
-  self.append(result, parent)
-  self.setValue(result, ID_COLUMN.int   , obj3d.id.toIntVal)
-  self.setValue(result, NAME_COLUMN.int , obj3d.name.toStringVal)
-  #self.setValue(result, HIDDEN_COLUMN.int, obj3d.hidden.toBoolVal)
-
-  let refObj = cast[pointer](obj3d)
-  echo "0: refObj: ", refObj.repr
-  var value = refObj.toPointerVal
-  self.setValue(result, USER_DATA.int, value)
-
-  echo "loadObj3dInIter: ", self.treeIterToStr(result)
-]#
 
 func getObj3d_no(self: TreeStore; iter: TreeIter): int =
   var value: Value
@@ -1003,10 +697,10 @@ proc addModel(objGL: ObjsOpengl; parms: Params) = # model: OBJM.Model) =
         echo "nUvts   : ", objGL.nUvts
         echo "nTriangl: ", objGL.nTriangles
 
-    isNormalBuf = objGL.nNorm == objGL.nVert
-    is_uv_buf   = objGL.nUvts == objGL.nVert
-    echo "normals exists: ", isNormalBuf
-    echo "uvts    exists: ", is_uv_buf
+    parms.isNormalBuf = objGL.nNorm == objGL.nVert
+    parms.is_uv_buf   = objGL.nUvts == objGL.nVert
+    echo "normals exists: ", parms.isNormalBuf
+    echo "uvts    exists: ", parms.is_uv_buf
 
     objGL.textureLoc0 = glGetUniformLocation(objGL.progId, "texture0")
     echo "Got handle for uniform texture0: ", objGL.textureLoc0
@@ -1020,11 +714,11 @@ proc addModel(objGL: ObjsOpengl; parms: Params) = # model: OBJM.Model) =
     glBindBuffer(GL_ARRAY_BUFFER, objGL.mesh.vbo)
     glBufferData(GL_ARRAY_BUFFER, objGL.bufs.ver.bufSiz, objGL.bufs.ver.bufAdr, GL_STATIC_DRAW)
 
-    if isNormalBuf:
+    if parms.isNormalBuf:
         glBindBuffer(GL_ARRAY_BUFFER, objGL.mesh.norm)
         glBufferData(GL_ARRAY_BUFFER, objGL.bufs.nor.bufSiz, objGL.bufs.nor.bufAdr, GL_STATIC_DRAW)
 
-    if is_uv_buf:
+    if parms.is_uv_buf:
         glBindBuffer(GL_ARRAY_BUFFER, objGL.mesh.uvt)
         glBufferData(GL_ARRAY_BUFFER, objGL.bufs.uvt.bufSiz, objGL.bufs.uvt.bufAdr, GL_STATIC_DRAW)
 
@@ -1672,13 +1366,13 @@ proc newAxeControl(parent:Obj3dControl; parms: Params, axe: Axe, rot=false, butL
     result.nameLabel.setSizeRequest(width= 140, height=32)
     result.hbox.add(result.nameLabel)
 
-    result.speedValLab = newLabel("   0.0 " & unitStr & "/s")
+    result.speedValLab = newLabel("0.000 " & unitStr & "/s")
     result.speedValLab.setXalign(0.99)
     result.speedValLab.setSizeRequest(width= 80, height=32)
     result.hBox.add(result.speedValLab)
 
     result.posValEntry = newEntry()
-    result.posValEntry.setText("0.0")
+    result.posValEntry.setText("0.000")
     result.posValEntry.setAlignment(0.99)
     result.posValEntry.setSizeRequest(width= 80, height= -1)
     result.hBox.add(result.posValEntry)
@@ -1721,18 +1415,6 @@ proc newObj3dControl(id: int, parms: Params): Obj3dControl =
     result.rotAxeCtrl.add(ac)
     #result.vBox.add(ac.hBox)
 
-#[
-proc initButtons(guiDat: GuiDatas): Box =
-    result = newBox(Orientation.vertical, spacing=0)
-
-    let parms = guiDat.parms
-
-    guiDat.camControl = newObj3dControl(parms)
-    result.add(guiDat.camControl.vBox)
-
-    guiDat.objSelControl = newObj3dControl(parms)
-    result.add(guiDat.objSelControl.vBox)
-]#
 
 proc main(debugTextureFile="") =
     #let parms = guiDat.parms
