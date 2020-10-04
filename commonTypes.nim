@@ -107,6 +107,7 @@ from sequtils import repeat
 from sugar    import collect
 
 const
+    zeroVec3f* = vec3f(0'f, 0'f, 0'f)
     maxF32 = float32.maximumPositiveValue
     minF32 = - maxF32
     MaxFloat3 = vec3f(maxF32, maxF32, maxF32)

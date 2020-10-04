@@ -86,6 +86,8 @@ type
         xyzRot0, xyzRot : Vec3f
         dxyzRot : Vec3f
 
+        accLin, accRot : Vec3f
+
         idx0*, idx1*: OBJL.Idx
         mtl     : OBJL.MaterialTmpl
         mapKaId, mapKdId, mapKsId : GLuint # texure_id
@@ -103,10 +105,14 @@ func toStr(self: Obj3D): string =
 
 const Obj3dNil: Obj3D = nil
 
-proc newObj3d(parent=Obj3dNil; name="root", hidden=false): Obj3D =
+proc newObj3D(parent=Obj3dNil; name="root", hidden=false, pos0=zeroVec3f): Obj3D =
     result = new Obj3D
-    result.name = name
+    result.name   = name
     result.hidden = hidden
+    result.pos0   = pos0
+    result.pos    = pos0
+    result.accLin = glm.vec3f(0.005f, 0.005f, 0.005f)
+    result.accRot = glm.vec3f(0.002f, 0.002f, 0.002f)
     if parent == nil:
       result.id = "0"
     else:
@@ -132,18 +138,46 @@ echo "Obj3dNil: ", Obj3dNil.type, ": ", Obj3dNil
 
 #-----------------------------------------------------
 
-proc accLin(self: Obj3D; idx: int; dv: float32) =
-    if dv == 0.0f: # stop vitess
+type
+    Axe = enum
+        noAxe = -1
+        X     =  0
+        Y     =  1
+        Z     =  2
+        XYZ   =  3
+
+    Cmd = enum
+        LESS = -1
+        STOP =  0
+        MORE =  1
+        RST  =  2
+
+var axe = Y
+echo fmt"axe: {axe}, ", $axe
+
+proc accLinCmd(self: Obj3D; axe: Axe; cmd: Cmd) =
+    echo self.name & ".accLinCmd(" & $axe & ", " & $cmd & ")"
+    let idx = axe.int
+    if cmd == RST: # reset position
+        self.pos[idx] = self.pos0[idx]
+    elif cmd == STOP: # stop move
         self.speed[idx] = 0.0f
     else:
-        self.speed[idx] += dv.float32
+        echo fmt"0: speed[{idx}]: {self.speed[idx]:8.3f}"
+        self.speed[idx] += self.accLin[idx] * cmd.float32
+        echo fmt"1: speed[{idx}]: {self.speed[idx]:8.3f}"
 
-proc accRot(self: Obj3D; idx: int; dv: float32) =
-    #echo self.name & ".accRot"
-    if dv == 0.0f: # stop vitess
+proc accRotCmd(self: Obj3D; axe: Axe; cmd: Cmd) =
+    echo self.name & ".accRotCmd(" & $axe & ", " & $cmd & ")"
+    let idx = axe.int
+    if cmd == RST: # reset position
+        self.xyzRot[idx] = 0.0f
+    elif cmd == STOP: # stop rotation
         self.dxyzRot[idx] = 0.0f
     else:
-        self.dxyzRot[idx] += dv.float32
+        echo fmt"0: dxyzRot[{idx}]: {self.dxyzRot[idx]:8.3f}"
+        self.dxyzRot[idx] += self.accRot[idx] * cmd.float32
+        echo fmt"1: dxyzRot[idx]: {self.dxyzRot[idx]:8.3f}"
 
 proc move(self: Obj3D; dt: float32) =
     for i in 0 ..< 3:
@@ -152,12 +186,12 @@ proc move(self: Obj3D; dt: float32) =
     for i in 0 ..< 3:
         self.xyzRot[i] += self.dxyzRot[i] * dt
 
-proc stopMove(self: Obj3D; idx=0; dv=0.0f) =
+proc stopMove(self: Obj3D; axe=XYZ; dummy=STOP) =
     #echo "stopMove"
     self.speed.reset
     self.dxyzRot.reset
 
-proc resetPos(self: Obj3D; idx=0; dv=0.0f) =
+proc resetPos(self: Obj3D; axe=XYZ; dummy=RST) =
     self.stopMove()
     #echo "resetPos"
     self.pos    = self.pos0
@@ -412,18 +446,22 @@ import tables # also exist gtk.Table: Table !
 
 # use an example to define define the correct type of the table
 var dummyObj: Obj3D
-var exTable = { 1234 : ("Dummy", accRot, "dummyObj", 3, -0.5f)}.toTable
+var exTable = { 1234 : ("Dummy", accRotCmd, "dummyObj", X, STOP)}.toTable
 type KeyCode2NameActionTable* = type(exTable)
 
 #got tuple (int, tuple of (string, proc (self: Obj3D, idx: int, i: int){.gcsafe, locks: 0.}, Obj3D, int, float32))>
 #but tuple (int, tuple of (string, proc (self: Obj3D, idx: int, dv: float32){.gcsafe, locks: 0.}, Obj3D, int, float32))'
+
+const nObj3dCtrls = 2
+
 type
     ParamsObj* = object of RootObj
         allObj3Ds*      : seq[Obj3D] # flat list
         obj3Ds*         : seq[Obj3D]
-        obj3dSel        : Obj3D
         tStore          : TreeStore
         tView           : TreeView
+        buttons         : seq[Button]
+        valLabels       : seq[Label]
         modelFileName   : string
         debugTextureFile: string
         useTextures     : bool
@@ -436,7 +474,7 @@ type
         lightPos*       : Vec3f
         lightPower*     : float32
         camer*          : Obj3D
-        textureNameToIds: OrderedTable[string, GLuint]
+        objToControl    : array[nObj3dCtrls, Obj3D]
         KeyCod2NamActionObj* : KeyCode2NameActionTable
 
     Params = ref ParamsObj
@@ -454,21 +492,22 @@ type
 
 type
     ObjsOpengl* = ref object of RootObj
-        progId: NGL.GLuint
-        matTplLib    : OBJL.MatTmplLib
-        rangMtlNames : OBJL.RangMtls
-        bufs         : OBJL.IndexedBufs
+        progId           : NGL.GLuint
+        matTplLib        : OBJL.MatTmplLib
+        rangMtlNames     : OBJL.RangMtls
+        textureNameToIds : OrderedTable[string, GLuint]
+        bufs             : OBJL.IndexedBufs
         nVert, nNorm, nUvts, nTriangles : int
-        uMVP, uV, uM : NGL.GLint
-        uColor : NGL.GLint
+        uMVP, uV, uM     : NGL.GLint
+        uColor           : NGL.GLint
         lightPos_id, lightPower_id, rgbaMask_id, useTextures_id : NGL.GLint
-        textureLoc0 : NGL.GLint
-        mesh        : Mesh
-        transpose   : GLboolean
-        #frames      : int
-        bg_color    : Vec3f
-        bufferAttrIdList: seq[BufferParams]
-        #grps_range     : seq[OBJL.GrpRange]
+        textureLoc0      : NGL.GLint
+        mesh             : Mesh
+        transpose        : GLboolean
+        #frames          : int
+        bg_color         : Vec3f
+        bufferAttrIdList : seq[BufferParams]
+        #grps_range      : seq[OBJL.GrpRange]
 
 func `$`*(self: Params): string =
     result = fmt"Params: frames: {self.frames}"
@@ -496,7 +535,7 @@ type # for pack parameters for callbacks of connect
     sb : Statusbar
     id : int
     t  : string
-
+  #[
   TreeStoreColumn = tuple
     st  : TreeStore
     col : int
@@ -504,22 +543,60 @@ type # for pack parameters for callbacks of connect
   TreeViewColumn = tuple
     tv  : TreeView
     col : int
-
+  ]#
   ParmsColumn = tuple
     parms : Params
     col   : int
+
+  Obj3RotAxeCmd = tuple
+    obj3d : Obj3D
+    rot   : bool
+    axe   : Axe
+    cmd   : Cmd
 
 func getObj3d(parms: Params; no: int): Obj3d =
     if no >= 1 and parms.allObj3Ds.len >= no:
         result = parms.allObj3Ds[no-1]
 
+type
+    AxeControl = ref object of RootObj
+        # logic
+        parent        : Obj3dControl
+        axe           : Axe
+        rot           : bool
+        # GUI
+        hbox          : Box
+        buttons       : array[4, Button]
+        nameLabel     : Label
+        speedValLab   : Label
+        posValEntry   : Entry
+        posUnitLab    : Label
+
+    Obj3dControl = ref object of RootObj
+        id            : int
+        name          : string # actual display
+        pos, xyzRot   : Vec3f # actual display
+        vBox          : Box
+        linAxeCtrl    : seq[AxeControl]
+        rotAxeCtrl    : seq[AxeControl]
 
 #-------------------------------------------------------------------------
 
-let parms = new Params # Global var !!!!!!!!!!!!
+type
+    GuiDatas =  ref object of RootObj
+        parms       : Params
+        glArea      : MyGLArea
+        obj3dCtrls  : array[nObj3dCtrls, Obj3dControl]
 
 #-------------------------------------------------------------------------
+#let params  = new Params # Global var !!!!!!!!!!!! TO REMOVE
 
+#let guiDat = new GuiDatas # Global var !!!!!!!!!!!!
+#guiDat.parms = params
+
+
+
+#-------------------------------------------------------------------------
 
 #[ extract from gintro/gobject.nim
 proc g_type_invalid_get_type*(): GType = g_type_from_name("(null)")
@@ -782,38 +859,27 @@ func getObj3d(parms: Params; iter: TreeIter): Obj3d =
 
 #------------------------------------------------------
 
-proc newObj3dStoredInScene(parms:Params; parent=Obj3dNil; name="root", hidden=false): Obj3d =
-    result = newObj3d(name=name, hidden=hidden, parent=parent)
-    parms.allObj3Ds.add(result)
-    result.no = parms.allObj3Ds.len
+proc storedObj3dInScene(parms: Params; obj3d: Obj3d): int =
+    parms.allObj3Ds.add(obj3d)
+    obj3d.no = parms.allObj3Ds.len
+    return obj3d.no
 
-
-proc prepareBufs( self: MyGLArea; modelFile: string,
+proc prepareBufs(objGL: ObjsOpengl; modelFile: string,
                   check=false, normalize=true, swapVertYZ=false, swapNormYZ=false, flipU=false, flipV=false,
                   ignoreTexture=false, debugTextureFile="";
                   grpsToInclude: seq[string]= @[], grpsToExclude: seq[string]= @[];
                   debug=1, dbgDecountReload=0
                 ): Obj3D =
 
-    let objGL = self.objGL
     #if debug >= 1: echo fmt"prepareBufs: {modelFile.extractFilename}, swapVertYZ:{swapVertYZ}, swapNormYZ:{swapNormYZ}, flipU:{flipU}, flipV:{flipV}"
 
     let objLoader = OBJL.newObjLoader()
+
     let parseOk = OBJL.parseObjFile(objLoader, modelFile, debug=debug, dbgDecountReload=dbgDecountReload)
-    #[
-                    loadModel(objLoader, modelFile,
-                            ignoreTexture=ignoreTexture,
-                            debugTextureFile=debugTextureFile,
-                            normalize=normalize, swapVertYZ=swapVertYZ, swapNormYZ=swapNormYZ,
-                            flipU=flipU, flipV=flipV, check=check,
-                            debug=debug, dbgDecountReload=dbgDecountReload
-                            )
-    ]#
     if not parseOk : return
 
 
-    result = newObj3dStoredInScene(parms) # new Obj3D
-    result.name = objLoader.objFile
+    result =  newObj3D(name=objLoader.objFile) # newObj3dStoredInScene(parms)
     objGL.matTplLib = objLoader.matTplLib
     #[
     type
@@ -848,50 +914,57 @@ proc prepareBufs( self: MyGLArea; modelFile: string,
 proc on_createContext(self: MyGLArea): uInt64 =
     echo "MyGLArea.on_createContext"
 
-proc on_unrealize(self: MyGLArea) =
-    echo "MyGLArea.on_unrealize"
-
 proc bufSiz[T](buf: seq[T]): int     {.inline.} = result = buf.len * T.sizeof
 proc bufAdr[T](buf: seq[T]): pointer {.inline.} = result = buf[0].unsafeaddr
 
-proc textureIdOfFile(texFile: string): GLuint =
-    if parms.textureNameToIds.contains(texFile): result = parms.textureNameToIds[texFile]
+proc textureIdOfFile(objGL: ObjsOpengl; texFile: string): GLuint =
+    if objGL.textureNameToIds.contains(texFile): result = objGL.textureNameToIds[texFile]
     else:
         result = load_image(texFile, debug=2)
-        if result >= 1: parms.useTextures = true # at least one texture loaded
-        parms.textureNameToIds[texFile] = result
+        #if result >= 1: objGL.useTextures = true # at least one texture loaded
+        objGL.textureNameToIds[texFile] = result
 
-proc addModel(self: MyGLArea; modelFile:string) = # model: OBJM.Model) =
+proc addModel(objGL: ObjsOpengl; parms: Params) = # model: OBJM.Model) =
+    let modelFile = parms.modelFileName
     echo "addModel: ", modelFile.extractFilename # model.name
 
     const vectorDim: GLint = 3 # 2D or 3D
 
-    let objGL = self.objGL
+    #let objGL = self.objGL
 
     let normalize  = true  # model.normalize
     let swapVertYZ = false # model.swapYZ
     let swapNormYZ = false # model.swapYZ
-    let obj3d = self.prepareBufs(modelFile, flipV=true, normalize=normalize, swapVertYZ=swapVertYZ, swapNormYZ=swapNormYZ, debugTextureFile=parms.debugTextureFile, debug=1)
+    let obj3d = objGL.prepareBufs(modelFile, flipV=true, normalize=normalize, swapVertYZ=swapVertYZ, swapNormYZ=swapNormYZ, debug=1)
     if obj3d == nil:
         echo "!!!!!!!!!!!!!!!!!!!!!! Cannot load model: ", modelFile
         return
 
+    discard parms.storedObj3dInScene(obj3d)
+
     echo fmt"***************** loading textures if not yet for {obj3d.name}: ", $objGL.bufs.rgMtls
     for rgMtl in objGL.bufs.rgMtls:
-        let child = newObj3dStoredInScene(parms, name=rgMtl.name, hidden=false, parent=obj3d) # new Obj3d
+        let child = newObj3D(name=rgMtl.name, hidden=false, parent=obj3d)
+        discard parms.storedObj3dInScene(child)
         child.name    = rgMtl.name
         child.idx0    = rgMtl.idx0
         child.idx1    = rgMtl.idx1
         child.mtlName = rgMtl.mtl
 
-        parms.obj3dSel = obj3d # select the last created
+        #parms.obj3dSel = obj3d # select the last created
+        parms.objToControl[1]  = obj3d # select the last created
 
         if objGL.matTplLib != nil and objGL.matTplLib.mtls.contains(child.mtlName) :
             child.mtl = objGL.matTplLib.mtls[child.mtlName]
             echo "child.mtl: ", $child.mtl
-            if child.mtl.mapKa.len > 0: child.mapKaId = textureIdOfFile(child.mtl.mapKa)
-            if child.mtl.mapKd.len > 0: child.mapKdId = textureIdOfFile(child.mtl.mapKd)
-            if child.mtl.mapKs.len > 0: child.mapKsId = textureIdOfFile(child.mtl.mapKs)
+            if child.mtl.mapKa.len > 0: child.mapKaId = objGL.textureIdOfFile(child.mtl.mapKa)
+            if child.mtl.mapKd.len > 0: child.mapKdId = objGL.textureIdOfFile(child.mtl.mapKd)
+            if child.mtl.mapKs.len > 0: child.mapKsId = objGL.textureIdOfFile(child.mtl.mapKs)
+
+    for name, gluint in objGL.textureNameToIds.pairs:
+        if gluint >= 1:
+            parms.useTextures = true # at least one texture loaded
+            break
 
     parms.obj3Ds.add(obj3d)
 
@@ -961,11 +1034,11 @@ proc addModel(self: MyGLArea; modelFile:string) = # model: OBJM.Model) =
     glBindBuffer(GL_ARRAY_BUFFER, 0)
 
 
-proc on_realize(self: MyGLArea) =
+proc on_realize(self: MyGLArea, guiDat: GuiDatas) =
     echo "MyGLArea.on_realize"
 
     let objGL = self.objGL
-    #let parms = parms
+    let parms = guiDat.parms
 
     self.makeCurrent()
     let err : ptr glib.Error = self.error
@@ -1081,22 +1154,26 @@ proc on_realize(self: MyGLArea) =
             #echo fmt"location {bufParams.attrLoc.int}: '{bufParams.name}'"
 
 
-proc on_resize(self: MyGLArea; width: int, height: int) = # ; user_data: pointer ?????
-    echo "on_resize : (w, h): ", (width, height)
+proc on_unrealize(self: MyGLArea, guiDat: GuiDatas) =
+    echo "MyGLArea.on_unrealize"
+
+
+proc on_resize(self: MyGLArea; width: int, height: int, guiDat: GuiDatas) = # ; user_data: pointer ?????
+    #echo "on_resize : (w, h): ", (width, height)
     self.width  = width
     self.height = height
 
 
-proc addObj(self: MyGLArea; fileName:string) =
+proc addObj(self: GuiDatas; fileName:string) =
     echo fmt"--------------------- MyGLArea.addObj: {fileName} ----------------------"
     #let pwd = joinPath(os.getCurrentDir(), "Obj3D")
-    parms.modelFileName = fileName # .relativePath(pwd) # make a request
+    self.parms.modelFileName = fileName # .relativePath(pwd) # make a request
 
 
-proc on_render(self: MyGLArea; context: gdk.GLContext): bool = # ; user_data: pointer ?????
-
+proc on_render(self: MyGLArea; context: gdk.GLContext, guiDat: GuiDatas): bool = # ; user_data: pointer ?????
+    let parms = guiDat.parms
     if parms.modelFileName.len > 0: # addModelReq:
-        self.addModel(parms.modelFileName) # parms.model)
+        self.objGL.addModel(parms) # parms.model)
         parms.modelFileName = "" # reset the request
         parms.frames = 0 # to display the first rendering
 
@@ -1141,7 +1218,6 @@ proc on_render(self: MyGLArea; context: gdk.GLContext): bool = # ; user_data: po
         )
     if debugMat4: echo "Proj :\n", p
 
-    # recule la camera et tourne la camera autour du sujet
     var v = mat4(1.0f) # identity
     v.translateInpl(vec3(-camer.pos[0], -camer.pos[1], -camer.pos[2]));
     #v.rotateInpl(yRotCam, vec3(-1.0f, 0.0f, 0.0f)) # axe horizontal suivant x
@@ -1236,16 +1312,62 @@ proc on_render(self: MyGLArea; context: gdk.GLContext): bool = # ; user_data: po
 
     parms.frames += 1
 
-proc animationStep(parms: Params) {.cdecl.} = #x: var float, y: var float, z: var float) =
+const allAxes: array[3, Axe] = [X, Y, Z]
+
+proc updateDisplay(objCtrl: Obj3dControl; linAxes: openArray[Axe], rotAxes: openArray[Axe], parms:Params) =
+    let id = objCtrl.id
+    if parms.objToControl[id] == nil:
+        # echo "updateDisplay: obj3d is nil !"
+        return
+
+    let name = parms.objToControl[id].name
+    #echo "updateDisplay: obj3d: ", name
+
+    var i : int
+
+    if name != objCtrl.name:
+        echo fmt"updateDisplay: {name}"
+        for axe in linAxes:
+            i = axe.int
+            objCtrl.linAxeCtrl[i].nameLabel.setLabel(name)
+            objCtrl.rotAxeCtrl[i].nameLabel.setLabel(name)
+        objCtrl.name = name
+
+    var txt: string
+    for axe in linAxes:
+        i = axe.int
+        let val = parms.objToControl[id].pos[i]
+        if val != objCtrl.pos[i]:
+            txt = fmt"{val:8.3f}"
+            #echo fmt"updateDisplay: {name}: linAxe:{axe}: ", txt
+            objCtrl.linAxeCtrl[i].posValEntry.setText(txt)
+            objCtrl.pos[i] =  val
+
+    for axe in rotAxes:
+        i = axe.int
+        let val = parms.objToControl[id].xyzRot[i]
+        if val != objCtrl.xyzRot[i]:
+            txt = fmt"{val:8.3f}"
+            #echo fmt"updateDisplay: {name}: rotAxe:{axe}: ", txt
+            objCtrl.rotAxeCtrl[i].posValEntry.setText(txt)
+            objCtrl.xyzRot[i] = val
+
+proc animationStep(guiDat: GuiDatas) {.cdecl.} = #x: var float, y: var float, z: var float) =
+    let parms = guiDat.parms
+
+    parms.time += parms.dt
+
     parms.camer.move(1.0)
+
     for obj3d in parms.obj3Ds:
         obj3d.move(1.0)
 
-proc invalidateCb(self: MyGLArea): bool =
-    animationStep(parms)
+    for objCtrl in guiDat.obj3dCtrls:
+        objCtrl.updateDisplay(linAxes=allAxes, rotAxes=allAxes, parms)
 
-    parms.time += parms.dt
-    self.queueRender() # queueDraw
+proc invalidateCb(guiDat: GuiDatas): bool =
+    animationStep(guiDat)
+    guiDat.glArea.queueRender() # queueDraw
     return SOURCE_CONTINUE
 
 func `$`(event: gdk.EventKey): string =
@@ -1282,7 +1404,7 @@ proc actionKey(event: gdk.EventKey, parms: Params, release=false) =
 
     if keyCode == 65 :  # "KeySpace" -> Show mesh
         parms.camer.stopMove()
-        parms.obj3dSel.stopMove()
+        parms.objToControl[1].stopMove()
         parms.polygDisp.faceIdx = 0 # GL_FRONT_AND_BACK
         parms.polygDisp.modeIdx = if not release: 1 else: 0 # GL_LINE else: GL_FILL
         return
@@ -1291,22 +1413,22 @@ proc actionKey(event: gdk.EventKey, parms: Params, release=false) =
 
     if  10.uint16 <= keyCode and keyCode <= 19: # select subObj
         let i = keyCode.int - 10
-        if parms.obj3dSel != nil and i < parms.obj3dSel.children.len:
-            let child = parms.obj3dSel.children[i]
+        if parms.objToControl[1] != nil and i < parms.objToControl[1].children.len:
+            let child = parms.objToControl[1].children[i]
             child.hidden = not child.hidden
             echo fmt"child: {child.name}:" & (if child.hidden: "hidden" else: "shown")
         else: echo fmt"keyCode:{keyCode:3}: i:{i} >= {parms.obj3Ds.len} => no selection !"
 
 
     elif keyCode.int in parms.KeyCod2NamActionObj:
-        let (name, fct, objStr, idx, d) = parms.KeyCod2NamActionObj[keyCode.int]
-        if idx < 0 : echo "nothing to do"
+        let (name, fct, objStr, axe, d) = parms.KeyCod2NamActionObj[keyCode.int]
+        if axe == noAxe : echo "nothing to do"
         else:
-            #echo fmt"found : {keyCode:3}: '{name}', idx:{idx}, d:{d:.3f}, objStr:{objStr}" #, fct:{fct} " # , type(obj) #, {obj}, fct.repr
+            #echo fmt"found : {keyCode:3}: '{name}', axe:{axe}, d:{d:.3f}, objStr:{objStr}" #, fct:{fct} " # , type(obj) #, {obj}, fct.repr
             var obj: Obj3D
             if   objStr == "camer": obj = parms.camer
-            elif objStr == "obj3d": obj = parms.obj3dSel
-            if obj != nil: fct(obj, idx, d)
+            elif objStr == "obj3d": obj = parms.objToControl[1]
+            if obj != nil: fct(obj, axe, d)
             #echo fmt"frame {parms.frames}: {obj}"
     elif keyChar == chr(0) :
         #echo "no action for keyCode: ", keyCode
@@ -1325,11 +1447,11 @@ proc actionKey(event: gdk.EventKey, parms: Params, release=false) =
         echo fmt"no action for keyCode: {keyCode} ie keyChar: '{keyChar}'"
         return
     var s = fmt"frame{parms.frames:5}: useTextures: {parms.useTextures}, cullFace: {parms.cullFace}, posCamera:{parms.camer.pos}"
-    if parms.obj3dSel != nil : s &= fmt"; obj3dSel: {parms.obj3dSel.name}, xyzRot:{parms.obj3dSel.xyzRot}"
+    if parms.objToControl[1] != nil : s &= fmt"; obj3dSel: {parms.objToControl[1].name}, xyzRot:{parms.objToControl[1].xyzRot}"
     echo s
 
 var keyCodePressed : uint16
-proc onKeyPress(self: gtk.Window; event: gdk.EventKey): bool =
+proc onKeyPress(self: gtk.Window; event: gdk.EventKey, parms: Params): bool =
     #echo "press  : ", $event
     var keyCode : uint16
     assert event.keycode(keyCode) # get the code and check return is ok
@@ -1339,7 +1461,7 @@ proc onKeyPress(self: gtk.Window; event: gdk.EventKey): bool =
     result = true
 
 #proc onKeyRelease(self: ApplicationWindow; event: gdk.EventKey): bool =
-proc onKeyRelease(self: gtk.Window; event: gdk.EventKey): bool =
+proc onKeyRelease(self: gtk.Window; event: gdk.EventKey, parms: Params): bool =
     #echo "release: ", $event
     keyCodePressed = 0
     actionKey(event, parms, release=true)
@@ -1365,6 +1487,7 @@ proc chooseFileObj(): string =
   let chooser = newFileChooserDialog("select an obj file", action=FileChooserAction.open)
   discard chooser.addButton("_Open"   , ResponseType.accept.ord)
   discard chooser.addButton("_Cancel" , ResponseType.cancel.ord)
+  discard chooser.setCurrentFolder(joinPath(os.getCurrentDir(), "Obj3D"))
   let ff = newFileFilter()
   ff.setName("file.obj only")
   ff.addPattern("*.obj")
@@ -1387,11 +1510,41 @@ proc onClick(b: Button, p:SbIdTxt) =
   echo "click " & txt
   discard sb.push(id, txt & " has been clicked")
 
+type MyButton = ref object of Button
+  objCtrl : Obj3dControl # parent
+  axeCtrl : AxeControl # parent
+  cmd     : Cmd
 
-proc onAddObj(mi: MenuItem, glArea: MyGLArea) =
+proc onClick(b: MyButton, parms: Params) =
+  var speedTxt : string
+  let obj3d = parms.objToControl[b.objCtrl.id]
+  if obj3d != nil:
+      let axe = b.axeCtrl.axe
+      let i   = axe.int
+      let rot = b.axeCtrl.rot
+      if rot:
+          echo fmt"rot around axe: {axe}, cmd: {b.cmd}"
+          obj3d.accRotCmd(b.axeCtrl.axe, b.cmd)
+          speedTxt = fmt"{obj3d.dxyzRot[i]:8.3f} rd/s"
+      else:
+          echo fmt"translate  axe: {axe}, cmd: {b.cmd}"
+          obj3d.accLinCmd(b.axeCtrl.axe, b.cmd)
+          speedTxt = fmt"{obj3d.speed[i]:8.3f} m/s"
+
+      b.axeCtrl.speedValLab.setLabel(speedTxt)
+
+  else: echo "onClick: obj3d is nil !"
+
+  #discard sb.push(id, txt & " has been clicked")
+
+proc onActivate(self: Entry; ac:AxeControl) =
+  echo "onActivate: ", self.getText
+
+
+proc onAddObj(mi: MenuItem, guiDat: GuiDatas) = # glArea: MyGLArea) =
   let fileName = chooseFileObj()
   # echo "onAddObj: fileName: ", fileName
-  if fileName.len > 0: glArea.addObj(fileName)
+  if fileName.len > 0: guiDat.addObj(fileName)
 
 
 proc onWindowDestroy(w: gtk.Window, txt= "") =
@@ -1402,8 +1555,6 @@ proc onWindowDestroy(w: gtk.Window, txt= "") =
 proc onQuitMenuActivate(mi: MenuItem, txt= "") =
   echo "onQuitMenuActivate " & txt
   mainQuit()
-
-
 
 
 proc onRemItem(widget: Button; tv: TreeView) =
@@ -1451,6 +1602,7 @@ proc onEdited(crText: CellRendererText; path: string; newText: string; tv: TreeV
     echo "onEdited: ", path, ", ", newText
     store.setValue(iter, NAME_COLUMN.int, newText.toStringVal)
 
+
 proc initTreeStoreAndView(parms : Params) =
   parms.tView  = newTreeView()
   parms.tView.setHeadersVisible(true)
@@ -1482,9 +1634,112 @@ proc initTreeStoreAndView(parms : Params) =
         #column.addAttribute(crText, "active", i) # "editable-set"
     discard parms.tView.appendColumn(column)
 
+#[
+proc initButtonGrid(parms: Params): Grid = # Box = #
+    #result = newbox(Orientation.vertical  , spacing=0)
+    #result = newbox(Orientation.horizontal, spacing=0)
+    result = newGrid()
+    for p in [("Up", 1, 0), ("Left", 0, 1), ("Stop", 1, 1), ("Right", 2, 1), ("Down", 1, 2)]:
+        echo "p : ", p
+        let (label, left, top) = p
+        let but = newButton(label)
+        but.setSizeRequest(width= 48, height=32)
+        parms.buttons.add(but)
+        #result.add(but)
+        result.attach(but, left=left, top=top, width=1, height=1)
+]#
+
+proc newAxeControl(parent:Obj3dControl; parms: Params, axe: Axe, rot=false, butLabels: openArray[string]): AxeControl =
+    result = new AxeControl
+    result.parent = parent
+    #let name = if parent.obj3d == nil: "noObj3d" else: parent.obj3d.name
+    let linRotStr = if rot: " rotAxe " else: " linAxe "
+    let unitStr = if rot: "rd" else: "m"
+    result.axe = axe
+    result.rot = rot
+    result.hBox = newBox(Orientation.horizontal, spacing=0)
+    for cmdi, label in butLabels.pairs:
+        let but: MyButton = newButton(MyButton, label)
+        but.axeCtrl = result
+        but.objCtrl = parent
+        but.cmd = (cmdi-1).Cmd
+        but.setSizeRequest(width= 56, height=32)
+        echo fmt"cmdi:{cmdi}, but.cmd:{but.cmd:4}, label:{label}"
+        but.connect("clicked", onClick, parms)
+        result.hbox.add(but)
+
+    result.nameLabel = newLabel("noObj " & linRotStr & $axe)
+    result.nameLabel.setSizeRequest(width= 140, height=32)
+    result.hbox.add(result.nameLabel)
+
+    result.speedValLab = newLabel("   0.0 " & unitStr & "/s")
+    result.speedValLab.setXalign(0.99)
+    result.speedValLab.setSizeRequest(width= 80, height=32)
+    result.hBox.add(result.speedValLab)
+
+    result.posValEntry = newEntry()
+    result.posValEntry.setText("0.0")
+    result.posValEntry.setAlignment(0.99)
+    result.posValEntry.setSizeRequest(width= 80, height= -1)
+    result.hBox.add(result.posValEntry)
+    result.posValEntry.connect("activate", onActivate, result)
+
+    result.posUnitLab  = newLabel(unitStr)
+    result.posUnitLab.setSizeRequest(width= 15, height=32)
+    result.hBox.add(result.posUnitLab)
+
+    parent.vBox.add(result.hBox)
+
+proc newObj3dControl(id: int, parms: Params): Obj3dControl =
+    result = new Obj3dControl
+    result.id = id
+
+    result.vBox = newBox(Orientation.vertical, spacing=0)
+
+    var ac: AxeControl
+    ac = newAxeControl(parent=result, parms, axe=X, rot=false, butLabels= ["Left", "StopX", "Right", "Reset"])
+    result.linAxeCtrl.add(ac)
+    #result.vBox.add(ac.hBox)
+
+    ac = newAxeControl(parent=result, parms, axe=Y, rot=false, butLabels= ["Down", "stopY", "Up"   , "Reset"])
+    result.linAxeCtrl.add(ac)
+    #result.vBox.add(ac.hBox)
+
+    ac = newAxeControl(parent=result, parms, axe=Z, rot=false, butLabels=["Back" , "StopZ", "Frwd" , "Reset"])
+    result.linAxeCtrl.add(ac)
+    #result.vBox.add(ac.hBox)
+
+    ac = newAxeControl(parent=result, parms, axe=X, rot=true , butLabels=["RotX-", "stopX", "RotX+", "Reset"])
+    result.rotAxeCtrl.add(ac)
+    #result.vBox.add(ac.hBox)
+
+    ac = newAxeControl(parent=result, parms, axe=Y, rot=true , butLabels=["RotY-", "stopY", "RotY+", "Reset"])
+    result.rotAxeCtrl.add(ac)
+    result.vBox.add(ac.hBox)
+
+    ac = newAxeControl(parent=result, parms, axe=Z, rot=true , butLabels=["RotZ-", "stopZ", "Rot+" , "Reset"])
+    result.rotAxeCtrl.add(ac)
+    #result.vBox.add(ac.hBox)
+
+#[
+proc initButtons(guiDat: GuiDatas): Box =
+    result = newBox(Orientation.vertical, spacing=0)
+
+    let parms = guiDat.parms
+
+    guiDat.camControl = newObj3dControl(parms)
+    result.add(guiDat.camControl.vBox)
+
+    guiDat.objSelControl = newObj3dControl(parms)
+    result.add(guiDat.objSelControl.vBox)
+]#
 
 proc main(debugTextureFile="") =
-    #var parms = new Params
+    #let parms = guiDat.parms
+    let guiDat = new GuiDatas
+    let parms  = new Params
+    guiDat.parms = parms
+
     parms.dt    = 0.050
     parms.delta = 0.004f
     parms.debugTextureFile = debugTextureFile
@@ -1526,7 +1781,6 @@ proc main(debugTextureFile="") =
           let mailMi    = newMenuItemWithLabel("Import mail...")
           imprMenu.append(mailMi)
 
-
         let sep    = newSeparatorMenuItem()
         fileMenu.append(sep)
 
@@ -1546,40 +1800,53 @@ proc main(debugTextureFile="") =
     let hbox = newbox(Orientation.horizontal, spacing=0)
     vBox.packStart(hbox, expand=true, fill=true, padding=0)
 
-
-    let glArea = newMyGLArea(parms) # newGLArea()
-    #vBox.add(glArea)
-    hBox.packStart(glArea, expand=true, fill=true, padding=0)
-
     let rightBox = newBox(Orientation.vertical, 0)
     hBox.add(rightBox)
+
+    parms.camer = newObj3D(name="camera", pos0=vec3f(0.0, 1.0, 4.0))
+
+    let objCtrlBox = newBox(Orientation.vertical, spacing=0)
+    var objCtrl: Obj3dControl
+    for i in 0 ..< nObj3dCtrls:
+        guiDat.obj3dCtrls[i]  = newObj3dControl(i, parms)
+        parms.objToControl[i] = Obj3dNil
+        objCtrlBox.add(guiDat.obj3dCtrls[i].vBox)
+    rightBox.add(objCtrlBox)
+
+    parms.objToControl[0] = parms.camer
 
     parms.initTreeStoreAndView()
 
     rightBox.packStart(parms.tView, true, true, 0)
 
-    addObjMi.connect("activate", onAddObj, glArea)
-
+    guiDat.glArea = newMyGLArea(parms) # newGLArea()
+    #vBox.add(glArea)
     #echo "type(glArea): ", type(glArea)
     #glArea.setAutoRender()
-    glArea.setSizeRequest(256, 256)
+    guiDat.glArea.setSizeRequest(256, 256)
 
     #glArea.connect("create-context", on_createContext)
-    glArea.connect("realize"  , on_realize)
-    glArea.connect("unrealize", on_unrealize)
-    glArea.connect("resize"   , on_resize)
-    glArea.connect("render"   , on_render)
+    guiDat.glArea.connect("realize"  , on_realize, guiDat)
+    guiDat.glArea.connect("unrealize", on_unrealize, guiDat)
+    guiDat.glArea.connect("resize"   , on_resize, guiDat)
+    guiDat.glArea.connect("render"   , on_render, guiDat)
+
+    addObjMi.connect("activate", onAddObj, guiDat)
+
+    if false:
+        vBox.packStart(guiDat.glArea, expand=true, fill=true, padding=0) # hBox
+    else:
+        let openglWin = newWindow(gtk.WindowType.toplevel)
+        openglWin. title = "OpenGL Window"
+        openglWin.add(guiDat.glArea)
+        openglWin.showAll
 
     #parms.obj3ds = Obj3D(); parms.sujet.name = "subject"
     #parms.sujet.resetPos()
 
-    parms.camer = Obj3D(); parms.camer.name = "camera"
-    parms.camer.pos0 = glm.vec3f(0.0, 1.0, 4.0)
-    parms.camer.resetPos()
-
-    let obj3dSel = parms.obj3dSel
-    let camer = parms.camer
-    let dv    = parms.delta
+    let obj3dSel = parms.objToControl[1]
+    let camer    = parms.camer
+    #let dv      = parms.delta
     parms.KeyCod2NamActionObj = {
         #[
         0 : ("KbdNul"   , nil, nil, -1, 0),
@@ -1587,29 +1854,29 @@ proc main(debugTextureFile="") =
         9 : ("KeyEscape", , 1),
        65 : ("KeySpace" , 0, 1),
        ]#
-       79 : ("NumPad7"  , accRot  , "obj3d", 2, -dv),
-       80 : ("NumPad8"  , accRot  , "obj3d", 2,  0f),
-       81 : ("NumPad9"  , accRot  , "obj3d", 2,  dv),
+       79 : ("NumPad7"  , accRotCmd, "obj3d", Z, LESS),
+       80 : ("NumPad8"  , accRotCmd, "obj3d", Z, STOP),
+       81 : ("NumPad9"  , accRotCmd, "obj3d", Z, MORE),
 
-       83 : ("NumPad4"  , accRot  , "obj3d", 1, -dv),
-       84 : ("NumPad5"  , accRot  , "obj3d", 1, -0f),
-       85 : ("NumPad6"  , accRot  , "obj3d", 1,  dv),
+       83 : ("NumPad4"  , accRotCmd, "obj3d", Y, LESS),
+       84 : ("NumPad5"  , accRotCmd, "obj3d", Y, STOP),
+       85 : ("NumPad6"  , accRotCmd, "obj3d", Y, MORE),
 
-       87 : ("NumPad1"  , accRot  , "obj3d", 0, -dv),
-       88 : ("NumPad2"  , accRot  , "obj3d", 0,  0f),
-       89 : ("NumPad3"  , accRot  , "obj3d", 0,  dv),
+       87 : ("NumPad1"  , accRotCmd, "obj3d", X, LESS),
+       88 : ("NumPad2"  , accRotCmd, "obj3d", X, STOP),
+       89 : ("NumPad3"  , accRotCmd, "obj3d", X, MORE),
 
-       90 : ("NumPad0"  , stopMove, "obj3d", 0,  0f),
-       91 : ("NumPadSup", resetPos, "obj3d", 0,  0f),
+       90 : ("NumPad0"  , stopMove , "obj3d", XYZ, STOP),
+       91 : ("NumPadSup", resetPos , "obj3d", XYZ, STOP),
 
-      113 : ("KeyLeft"  , accLin  , "camer", 0, -dv),
-      114 : ("KeyRigth" , accLin  , "camer", 0,  dv),
-      116 : ("KeyDown"  , accLin  , "camer", 1, -dv),
-      111 : ("KeyUp"    , accLin  , "camer", 1,  dv),
-      112 : ("PageUp"   , accLin  , "camer", 2, -dv),
-      117 : ("PageDown" , accLin  , "camer", 2,  dv),
-      118 : ("insert"   , resetPos, "camer", 0,  0f),
-      119 : ("Supress"  , stopMove, "camer", 0,  0f),
+      113 : ("KeyLeft"  , accLinCmd, "camer", X, LESS),
+      114 : ("KeyRigth" , accLinCmd, "camer", X, MORE),
+      116 : ("KeyDown"  , accLinCmd, "camer", Y, LESS),
+      111 : ("KeyUp"    , accLinCmd, "camer", Y, MORE),
+      112 : ("PageUp"   , accLinCmd, "camer", Z, LESS),
+      117 : ("PageDown" , accLinCmd, "camer", Z, MORE),
+      118 : ("insert"   , resetPos , "camer", XYZ, STOP),
+      119 : ("Supress"  , stopMove , "camer", XYZ, STOP),
       }.toTable
 
     echo "use arrow and pageup/down for camera move and keypad keys for model rotation"
@@ -1626,12 +1893,14 @@ proc main(debugTextureFile="") =
 
     window.connect("destroy" , onWindowDestroy, "goodbye")
 
-    window.connect("key_press_event"  , onKeyPress  )
-    window.connect("key_release_event", onKeyRelease)
+    window.connect("key_press_event"  , onKeyPress  , parms)
+    window.connect("key_release_event", onKeyRelease, parms)
 
     window.showAll
 
-    discard timeoutAdd((parms.dt*1000.0).uint32, invalidateCb, glArea)
+    # proc timeoutAdd*(priority: int; interval: int; function: SourceFunc; data: pointer; notify: DestroyNotify): int =
+    #discard timeoutAdd(interval=(parms.dt*1000.0).uint32, function=invalidateCb, data=guiDat)
+    discard timeoutAdd((parms.dt*1000.0).uint32, invalidateCb, guiDat)
 
     gtk.main()
 
