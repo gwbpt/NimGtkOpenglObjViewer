@@ -70,6 +70,35 @@ proc reset(pd: var PolygonDisplay) =
     pd.setOgl()
 
 #-------------------------------------------------------
+type
+    ChangeFlag* {.size: sizeof(cint).} = enum
+        HiddenChng
+        TexturChng
+        Pos_x_Chng
+        Pos_y_Chng
+        Pos_z_Chng
+        Rot_x_Chng
+        Rot_y_Chng
+        Rot_z_Chng
+    ChangeFlags = set[ChangeFlag] # BitFfields
+
+const 
+    posChngFlag: array[3, ChangeFlag] = [Pos_x_Chng, Pos_y_Chng, Pos_z_Chng]
+    rotChngFlag: array[3, ChangeFlag] = [Rot_x_Chng, Rot_y_Chng, Rot_z_Chng]
+    allPosChngFlag: ChangeFlags = {Pos_x_Chng, Pos_y_Chng, Pos_z_Chng}
+    allRotChngFlag: ChangeFlags = {Rot_x_Chng, Rot_y_Chng, Rot_z_Chng}
+
+proc `+=`(self: var ChangeFlags; other:ChangeFlags) = self = self + other
+
+proc toNum(f: ChangeFlags): int = cast[cint](f)
+proc toFlags(v: int): ChangeFlags = cast[ChangeFlags](v)
+
+assert toNum({}) == 0
+assert toNum({HiddenChng}) == 1
+assert toNum({Pos_y_Chng}) == 8
+#assert toNum({A, C}) == 5
+#assert toFlags(0) == {}
+#assert toFlags(7) == {A, B, C}
 
 type
     Obj3D = ref object of RootObj
@@ -78,7 +107,8 @@ type
         name    : string
         parent  : Obj3D
         children: seq[Obj3D]
-        hidden  : bool
+        hidden, texturOff: bool
+        chngFlgs: ChangeFlags
         mtlName : string
 
         pos0, pos : Vec3f # ie glm.Vec3[float32]
@@ -92,16 +122,6 @@ type
         mtl     : OBJL.MaterialTmpl
         mapKaId, mapKdId, mapKsId : GLuint # texure_id
 
-#[
-func `$`(self: Obj3D): string =
-    result = fmt"{self.name:16}: speed:{self.speed}, pos:{self.pos}, dxyzRot:{self.dxyzRot}, xyzRot:{self.xyzRot}"
-
-func toStr(self: Obj3D): string =
-    result = fmt"Obj3D {self}:"
-    result &= NL & fmt"    mtl: {self.mtl}"
-    for child in self.children:
-        result &= NL & fmt"    child: {SQ & child.name & SQ:21}: hidden:{child.hidden}, mtlName:'{child.mtlName}', mapKaId:{child.mapKaId}, mapKdId:{child.mapKdId}, mapKsId:{child.mapKsId}"
-]#
 
 const Obj3dNil: Obj3D = nil
 
@@ -133,7 +153,22 @@ proc toStr(self: Obj3D): string =
     for child in self.children:
         result &= NL & fmt"    child: {SQ & child.name & SQ:21}: "
         #, mtlName:'{child.mtlName}', mapKaId:{child.mapKaId}, mapKdId:{child.mapKdId}, mapKsId:{child.mapKsId}"
+#[
+func hasChanged(self: Obj3D): bool =
+    if self.hidden != self.prevHidden : return true 
+    if self.pos    != self.prevPos    : return true 
+    if self.xyzRot != self.prevXyzRot : return true 
+    for child in self.children:
+        if child.hasChanged : return true 
 
+proc setPrev(self: Obj3D) =
+    self.prevHidden = self.hidden
+    self.prevPos    = self.pos
+    self.prevXyzRot = self.xyzRot
+    for child in self.children:
+        child.setPrev
+]#
+    
 echo "Obj3dNil: ", Obj3dNil.type, ": ", Obj3dNil
 
 #-----------------------------------------------------
@@ -151,6 +186,8 @@ type
         STOP =  0
         MORE =  1
         RST  =  2
+
+const allAxes: array[3, Axe] = [X, Y, Z]
 
 var axe = Y
 echo fmt"axe: {axe}, ", $axe
@@ -181,10 +218,14 @@ proc accRotCmd(self: Obj3D; axe: Axe; cmd: Cmd) =
 
 proc move(self: Obj3D; dt: float32) =
     for i in 0 ..< 3:
-        self.pos[i] += self.speed[i] * dt
+        if self.speed[i] != 0.0f:
+            self.pos[i] += self.speed[i] * dt
+            self.chngFlgs.incl(posChngFlag[i])
 
     for i in 0 ..< 3:
-        self.xyzRot[i] += self.dxyzRot[i] * dt
+        if self.dxyzRot[i] != 0.0f:
+            self.xyzRot[i] += self.dxyzRot[i] * dt
+            self.chngFlgs.incl(rotChngFlag[i])
 
 proc stopMove(self: Obj3D; axe=XYZ; dummy=STOP) =
     #echo "stopMove"
@@ -194,8 +235,12 @@ proc stopMove(self: Obj3D; axe=XYZ; dummy=STOP) =
 proc resetPos(self: Obj3D; axe=XYZ; dummy=RST) =
     self.stopMove()
     #echo "resetPos"
+
     self.pos    = self.pos0
+    self.chngFlgs += allPosChngFlag
+
     self.xyzRot = self.xyzRot0
+    self.chngFlgs += allRotChngFlag
 
 # -------------------------------------------------------------------------------------------
 
@@ -234,8 +279,10 @@ type
         valLabels       : seq[Label]
         modelFileName   : string
         debugTextureFile: string
-        isNormalBuf, is_uv_buf, useTextures: bool
+        isNormalBuf, is_uv_buf: bool
         cullFace        : int
+        useTextures     : bool
+        hasChanged      : bool
         time, dt        : float
         delta           : float32
         frames*         : int
@@ -248,6 +295,10 @@ type
         KeyCod2NamActionObj* : KeyCode2NameActionTable
 
     Params = ref ParamsObj
+
+proc useTexturesToggle(parms: Params) =
+    parms.usetextures = not parms.usetextures
+    parms.hasChanged = true
 
 type
     Mesh = tuple[vbo, vao, ebo, norm, uvt: uint32]
@@ -287,7 +338,7 @@ func `$`*(self: Params): string =
 type
     MyGLArea* = ref object of GLArea
         width, height : int
-        #parms: Params
+        whHasChanged  : bool
         objGL: ObjsOpengl
 
 proc newMyGLArea*(parms: Params): MyGLArea =
@@ -329,7 +380,6 @@ type
         # GUI
         hbox          : Box
         buttons       : array[4, Button]
-        nameLabel     : Label
         speedValLab   : Label
         posValEntry   : Entry
         posUnitLab    : Label
@@ -339,6 +389,7 @@ type
         name          : string # actual display
         pos, xyzRot   : Vec3f # actual display
         vBox          : Box
+        nameLabel     : Label
         linAxeCtrl    : seq[AxeControl]
         rotAxeCtrl    : seq[AxeControl]
 
@@ -348,6 +399,9 @@ type
     GuiDatas =  ref object of RootObj
         parms       : Params
         glArea      : MyGLArea
+        frameValuLab: Label
+        prevTime    : float
+        prevFrames  : int
         obj3dCtrls  : array[nObj3dCtrls, Obj3dControl]
 
 #-------------------------------------------------------------------------
@@ -484,11 +538,12 @@ type
     ID_COLUMN
     NAME_COLUMN
     HIDDEN_COLUMN
+    TEXTUR_COLUMN
     MTL_COLUMN
     N_COLUMNS # give the nb of column
 
-var columnTypes  : seq[GType]  = @[gType_int, str_gtype, bool_gtype, str_gtype]
-var columnTitles : seq[string] = @[   "Id"  ,   "Name" ,  "Hidden" , "mtlName"]
+var columnTypes  : seq[GType]  = @[gType_int, str_gtype, bool_gtype, bool_gtype, str_gtype]
+var columnTitles : seq[string] = @[   "Id"  ,   "Name" ,  "Hidden", "noTexture" , "mtlName"]
 
 # we need the following two procs for now -- later we will not use that ugly cast...
 proc typeTest(o: gobject.Object; s: string): bool =
@@ -812,14 +867,7 @@ proc on_realize(self: MyGLArea, guiDat: GuiDatas) =
     #let toto3_id = glGetUniformLocation(objGL.progId, "toto3")
     #echo "Got handle for uniform 'toto3' :", toto3_id
 
-    var
-        log_length: int32
-        message = newSeq[char](1024)
-        pLinked: int32
-    glGetProgramiv(objGL.progId, GL_LINK_STATUS, pLinked.addr);
-    if pLinked != GL_TRUE.ord:
-        glGetProgramInfoLog(objGL.progId, 1024, log_length.addr, message[0].addr);
-        echo message
+    # varconst allAxes: array[3, Axe] = [X, Y, Z]
 
     # declaration usefull for UniformColorMode
     objGL.uColor = glGetUniformLocation(objGL.progId, "uColor")
@@ -856,6 +904,7 @@ proc on_resize(self: MyGLArea; width: int, height: int, guiDat: GuiDatas) = # ; 
     #echo "on_resize : (w, h): ", (width, height)
     self.width  = width
     self.height = height
+    self.whHasChanged = true
 
 
 proc addObj(self: GuiDatas; fileName:string) =
@@ -863,6 +912,23 @@ proc addObj(self: GuiDatas; fileName:string) =
     #let pwd = joinPath(os.getCurrentDir(), "Obj3D")
     self.parms.modelFileName = fileName # .relativePath(pwd) # make a request
 
+func noChange(parms: Params): bool =
+    if parms.frames == 0 : return
+    if parms.hasChanged:
+        debugEcho "parms.hasChanged"
+        return
+    if parms.camer.chngFlgs != {}: 
+        #debugEcho "camera has moved: ", $parms.camer.chngFlgs
+        return
+    for obj3d in parms.obj3Ds:
+        if obj3d.chngFlgs != {}: 
+            #debugEcho fmt"obj3d {obj3d.name} has moved: ", $obj3d.chngFlgs
+            return
+        for child in obj3d.children:
+            if child.chngFlgs != {}: 
+                #debugEcho fmt"child {child.name} has moved: ", $child.chngFlgs
+                return
+    result = true
 
 proc on_render(self: MyGLArea; context: gdk.GLContext, guiDat: GuiDatas): bool = # ; user_data: pointer ?????
     let parms = guiDat.parms
@@ -870,6 +936,9 @@ proc on_render(self: MyGLArea; context: gdk.GLContext, guiDat: GuiDatas): bool =
         self.objGL.addModel(parms) # parms.model)
         parms.modelFileName = "" # reset the request
         parms.frames = 0 # to display the first rendering
+
+    if not self.whHasChanged and parms.noChange: return true # or false ??????????????????
+    #echo "Change => render"
 
     let debugMat4 = false
     let dbgFirstFrame = parms.frames == 0
@@ -892,10 +961,11 @@ proc on_render(self: MyGLArea; context: gdk.GLContext, guiDat: GuiDatas): bool =
 
     parms.polygDisp.setOgl() # met a jour glPolygonMode qui est ecrase par Gtk
 
-    let viewport_x     :NGL.GLint = 0
-    let viewport_y     :NGL.GLint = 0
+    #let viewport_x     :NGL.GLint = 0
+    #let viewport_y     :NGL.GLint = 0
     let viewport_width :NGL.GLint = NGL.GLint(self.width)  # getAllocatedWidth( self))
     let viewport_height:NGL.GLint = NGL.GLint(self.height) # getAllocatedHeight(self)) #.float
+    self.whHasChanged = false
 
     let
         w_h_ratio = viewport_width.float / viewport_height.float
@@ -917,6 +987,7 @@ proc on_render(self: MyGLArea; context: gdk.GLContext, guiDat: GuiDatas): bool =
     #v.rotateInpl(yRotCam, vec3(-1.0f, 0.0f, 0.0f)) # axe horizontal suivant x
     #v.rotateInpl(xRotCam, vec3( 0.0f, 1.0f, 0.0f)) # axe vertical y
     if debugMat4: echo "View :\n", v
+    camer.chngFlgs = {}
 
     var vp  = p * v
 
@@ -983,7 +1054,7 @@ proc on_render(self: MyGLArea; context: gdk.GLContext, guiDat: GuiDatas): bool =
             let offset : ptr uint8 = cast[ptr uint8](offsetInt)
             if dbgFirstFrame: msg = fmt"    child:{SQ & child.name & SQ:24}; offset: 0x{offsetInt.toHex}, count:{count:7}, "
 
-            let useTex = parms.useTextures and objGL.bufs.uvt.len != 0 and child.mapKdId > 0
+            let useTex = parms.useTextures and objGL.bufs.uvt.len != 0 and child.mapKdId > 0 and not child.texturOff
             glUniform1i(objGL.useTextures_id, useTex.GLint) # bool to GLint
             if useTex:
                 glActiveTexture((GL_TEXTURE0.int + child.mapKdId.int-1).GLenum)
@@ -1003,10 +1074,11 @@ proc on_render(self: MyGLArea; context: gdk.GLContext, guiDat: GuiDatas): bool =
                 GL_UNSIGNED_INT, # type GL_UNSIGNED_SHORT or GL_UNSIGNED_INT
                 offset           # bufs.idx[gr.idx0].addr # indices: pointer element array buffer offset # nil
                 )
-
+            child.chngFlgs = {}
+        obj3d.chngFlgs = {}
     parms.frames += 1
+    parms.hasChanged = false
 
-const allAxes: array[3, Axe] = [X, Y, Z]
 
 proc updateDisplay(objCtrl: Obj3dControl; linAxes: openArray[Axe], rotAxes: openArray[Axe], parms:Params) =
     let id = objCtrl.id
@@ -1021,10 +1093,7 @@ proc updateDisplay(objCtrl: Obj3dControl; linAxes: openArray[Axe], rotAxes: open
 
     if name != objCtrl.name:
         echo fmt"updateDisplay: {name}"
-        for axe in linAxes:
-            i = axe.int
-            objCtrl.linAxeCtrl[i].nameLabel.setLabel(name)
-            objCtrl.rotAxeCtrl[i].nameLabel.setLabel(name)
+        objCtrl.nameLabel.setLabel(name)
         objCtrl.name = name
 
     var txt: string
@@ -1060,6 +1129,16 @@ proc animationStep(guiDat: GuiDatas) {.cdecl.} = #x: var float, y: var float, z:
         objCtrl.updateDisplay(linAxes=allAxes, rotAxes=allAxes, parms)
 
 proc invalidateCb(guiDat: GuiDatas): bool =
+    let time = epochTime()
+    let frames = guiDat.parms.frames
+    let dt = time - guiDat.prevTime
+    if dt > 0.200:
+        let dFrames = frames - guiDat.prevFrames
+        #echo fmt"dt : {dt:6.3f}, dFrames:{dFrames}"
+        let fps = dFrames.float / dt 
+        guiDat.frameValuLab.setLabel(fmt"{fps:.1f} fps")
+        guiDat.prevTime   = time
+        guiDat.prevFrames = frames
     animationStep(guiDat)
     guiDat.glArea.queueRender() # queueDraw
     return SOURCE_CONTINUE
@@ -1081,7 +1160,6 @@ func `$`(event: gdk.EventKey): string =
         result &= "keyval <  0x10000 : 0x" & keyVal.tohex(4)
     else:
         result &= "keyval >= 0x10000 : 0x" & keyVal.tohex(16)
-
 
 proc actionKey(event: gdk.EventKey, parms: Params, release=false) =
     var keyCode : uint16
@@ -1110,6 +1188,7 @@ proc actionKey(event: gdk.EventKey, parms: Params, release=false) =
         if parms.objToControl[1] != nil and i < parms.objToControl[1].children.len:
             let child = parms.objToControl[1].children[i]
             child.hidden = not child.hidden
+            child.chngFlgs.incl(HiddenChng)
             echo fmt"child: {child.name}:" & (if child.hidden: "hidden" else: "shown")
         else: echo fmt"keyCode:{keyCode:3}: i:{i} >= {parms.obj3Ds.len} => no selection !"
 
@@ -1128,7 +1207,7 @@ proc actionKey(event: gdk.EventKey, parms: Params, release=false) =
         #echo "no action for keyCode: ", keyCode
         return
     elif keyChar == 'c' : parms.cullFace = (parms.cullFace + 1).mod(3)
-    elif keyChar == 't' : parms.useTextures = not parms.useTextures
+    elif keyChar == 't' : parms.useTexturesToggle()
     elif keyChar == 'm' : parms.polygDisp.nextMode()
     elif keyChar == 'f' : parms.polygDisp.nextFace()
     elif keyChar == 'r' :
@@ -1276,7 +1355,12 @@ proc toggleBool(parms: Params; iter: TreeIter; column: int) =
     parms.tStore.setValue(iter, column, value)
 
     var obj3d = parms.getObj3d(iter)
-    obj3d.hidden =  b
+    if   column == HIDDEN_COLUMN.int:
+        obj3d.hidden =  b
+        obj3d.chngFlgs.incl(HiddenChng)
+    elif column == TEXTUR_COLUMN.int:
+        obj3d.texturOff =  b
+        obj3d.chngFlgs.incl(TexturChng)
 
 proc onToggle(crToggle: CellRendererToggle; path: string, p: ParmsColumn) =
   let (parms, column) = p
@@ -1297,7 +1381,7 @@ proc onEdited(crText: CellRendererText; path: string; newText: string; tv: TreeV
     store.setValue(iter, NAME_COLUMN.int, newText.toStringVal)
 
 
-proc initTreeStoreAndView(parms : Params) =
+proc initTreeStoreAndView(parms: Params) =
   parms.tView  = newTreeView()
   parms.tView.setHeadersVisible(true)
 
@@ -1307,14 +1391,14 @@ proc initTreeStoreAndView(parms : Params) =
   for i, title in columnTitles.pairs:
     let column = newTreeViewColumn()
     column.title = title
-    if i == HIDDEN_COLUMN.int:
+    if i.Columns in [HIDDEN_COLUMN, TEXTUR_COLUMN]:
       let crToggle = newCellRendererToggle()
       let p: ParmsColumn = (parms, i)
       crToggle.connect("toggled", onToggle, p)
       column.packStart(crToggle, true)
       column.addAttribute(crToggle, "active", i) # "radio"
     else:
-      let crText   = newCellRendererText()
+      let crText = newCellRendererText()
       column.packStart(crText, true)
       column.addAttribute(crText, "text", i) # "text"
       if i == NAME_COLUMN.int:
@@ -1329,7 +1413,43 @@ proc initTreeStoreAndView(parms : Params) =
     discard parms.tView.appendColumn(column)
 
 #[
-proc initButtonGrid(parms: Params): Grid = # Box = #
+gtk_widget_override_background_color (GtkWidget *widget, GtkStateFlags state, const GdkRGBA *color);
+proc overrideBackgroundColor*(self: Widget; state: StateFlags; color: gdk.RGBA = cast[ptr gdk.RGBA](nil)[]) =
+
+type
+    RGBA* {.pure, byRef.} = object
+        red*  : cdouble
+        green*: cdouble
+        blue* : cdouble
+        alpha*: cdouble
+type
+    StateFlag* {.size: sizeof(cint), pure.} = enum
+        active = 0
+        prelight = 1
+        selected = 2
+        insensitive = 3
+        inconsistent = 4
+        focused = 5
+        backdrop = 6
+        dirLtr = 7
+        dirRtl = 8
+        link = 9
+        visited = 10
+        checked = 11
+        dropActive = 12
+
+    StateFlags* {.size: sizeof(cint).} = set[StateFlag]
+]#
+
+const GTK_STATE_NORMAL: StateFlags = {}
+
+var rgba: gdk.RGBA = RGBA()
+rgba.red   = 0.99
+rgba.green = 0.99
+rgba.blue  = 0.80
+rgba.alpha = 1.00
+
+proc initButtonCrossGrid(parms: Params): Grid = # Box = #
     #result = newbox(Orientation.vertical  , spacing=0)
     #result = newbox(Orientation.horizontal, spacing=0)
     result = newGrid()
@@ -1341,45 +1461,119 @@ proc initButtonGrid(parms: Params): Grid = # Box = #
         parms.buttons.add(but)
         #result.add(but)
         result.attach(but, left=left, top=top, width=1, height=1)
-]#
+
+proc initButtonGrid(parms: Params): Grid = # Box = #
+    #result = newbox(Orientation.vertical  , spacing=0)
+    #result = newbox(Orientation.horizontal, spacing=0)
+    result = newGrid()
+    result.setColumnSpacing(3)
+    result.setRowSpacing(5) 
+    result.setColumnHomogeneous(true) # to divide in equal spaces
+    result.setRowHomogeneous(true) # to divide in equal spaces
+    var x, y, w : int
+    y = 0
+    for i in 0 ..< 2:
+        x = 6
+        w = 10
+        let objLab = newLabel("obj3D" & $i)
+        objLab.overrideBackgroundColor(state= GTK_STATE_NORMAL, color= rgba) 
+        result.attach(objLab, left=x, top=y, width=w, height=1)        
+        y += 1
+        for linRotUnit in [("Lin", "m"), ("Rot", "rd")]:
+            let (linRot, unitLab) = linRotUnit
+            for axeLab in ["x", "y", "z"]:
+                let lineLab = axeLab & linRot
+                x = 0
+
+                w = 2
+                let lineNameLab = newLabel(lineLab)
+                #lineNameLab.overrideBackgroundColor(state= GTK_STATE_NORMAL, color= rgba) 
+                result.attach(lineNameLab, left=x, top=y, width=w, height=1)
+                x += w
+
+                w = 2
+                for butLab in ["-", "0", "+", "R"]:
+                    let but = newButton(butLab)
+                    but.setSizeRequest(width= 24, height=32)
+                    result.attach(but, left=x, top=y, width=w, height=1)
+                    x += w
+
+                w = 3
+                let speedlab = newLabel("-0.000")
+                speedlab.setXalign(0.99)
+                #speedlab.overrideBackgroundColor(state= GTK_STATE_NORMAL, color= rgba) 
+                result.attach(speedlab, left=x, top=y, width=w, height=1)
+                x += w
+
+                w = 2
+                let unitSpeedLab = newLabel(unitLab & "/s")
+                #unitSpeedLab.overrideBackgroundColor(state= GTK_STATE_NORMAL, color= rgba) 
+                result.attach(unitSpeedLab, left=x, top=y, width=w, height=1)
+                x += w
+
+                w = 4
+                let posEntry = newEntry()
+                #posEntry.setMaxLength(6)
+                posEntry.setWidthChars(6)
+                #posEntry.setMaxWidthChars(6)
+                posEntry.setText("-0.000")
+                posEntry.setAlignment(0.99)
+                #let posEntry = newLabel("-0.000")
+                result.attach(posEntry, left=x, top=y, width=w, height=1)
+                x += w
+
+                w = 2
+                let unitPosLab = newLabel(unitLab)
+                #unitPosLab.overrideBackgroundColor(state= GTK_STATE_NORMAL, color= rgba) 
+                result.attach(unitPosLab, left=x, top=y, width=w, height=1)
+                x += w
+
+                y += 1
+                echo fmt"grid y:{y:2}, x:{x:2}"
+
 
 proc newAxeControl(parent:Obj3dControl; parms: Params, axe: Axe, rot=false, butLabels: openArray[string]): AxeControl =
     result = new AxeControl
     result.parent = parent
     #let name = if parent.obj3d == nil: "noObj3d" else: parent.obj3d.name
+
     let linRotStr = if rot: " rotAxe " else: " linAxe "
     let unitStr = if rot: "rd" else: "m"
     result.axe = axe
     result.rot = rot
-    result.hBox = newBox(Orientation.horizontal, spacing=0)
+    result.hBox = newBox(Orientation.horizontal, spacing=2)
+
+    let height = 30
     for cmdi, label in butLabels.pairs:
         let but: MyButton = newButton(MyButton, label)
         but.axeCtrl = result
         but.objCtrl = parent
         but.cmd = (cmdi-1).Cmd
-        but.setSizeRequest(width= 56, height=32)
+        but.setSizeRequest(width= 52, height= height)
         echo fmt"cmdi:{cmdi}, but.cmd:{but.cmd:4}, label:{label}"
         but.connect("clicked", onClick, parms)
         result.hbox.add(but)
+    if true:
+        let axeLabel = newLabel(linRotStr & $axe)
+        axeLabel.overrideBackgroundColor(state= GTK_STATE_NORMAL, color= rgba) 
+        axeLabel.setWidthChars(12) # .setSizeRequest(width= 80, height= height)
+        result.hbox.add(axeLabel)
 
-    result.nameLabel = newLabel("noObj " & linRotStr & $axe)
-    result.nameLabel.setSizeRequest(width= 140, height=32)
-    result.hbox.add(result.nameLabel)
-
-    result.speedValLab = newLabel("0.000 " & unitStr & "/s")
+    result.speedValLab = newLabel("  0.000" & " " & unitStr & "/s")
+    result.speedValLab.overrideBackgroundColor(state= GTK_STATE_NORMAL, color= rgba) 
     result.speedValLab.setXalign(0.99)
-    result.speedValLab.setSizeRequest(width= 80, height=32)
+    result.speedValLab.setWidthChars(16) # .setSizeRequest(width= 100, height= height)
     result.hBox.add(result.speedValLab)
 
     result.posValEntry = newEntry()
     result.posValEntry.setText("0.000")
     result.posValEntry.setAlignment(0.99)
-    result.posValEntry.setSizeRequest(width= 80, height= -1)
+    result.posValEntry.setWidthChars(9) # .setSizeRequest(width= 9, height= height)
     result.hBox.add(result.posValEntry)
     result.posValEntry.connect("activate", onActivate, result)
 
     result.posUnitLab  = newLabel(unitStr)
-    result.posUnitLab.setSizeRequest(width= 15, height=32)
+    result.posUnitLab.setWidthChars(4) # setSizeRequest(width= 16, height= height)
     result.hBox.add(result.posUnitLab)
 
     parent.vBox.add(result.hBox)
@@ -1389,6 +1583,18 @@ proc newObj3dControl(id: int, parms: Params): Obj3dControl =
     result.id = id
 
     result.vBox = newBox(Orientation.vertical, spacing=0)
+
+    if true:
+        let hBox = newBox(Orientation.horizontal, spacing=0)
+        hBox.setProperty("homogeneous", true.toBoolVal) # to divide in equal spaces
+        result.nameLabel = newLabel("noObj")
+        result.nameLabel.overrideBackgroundColor(state= GTK_STATE_NORMAL, color= rgba) 
+        result.nameLabel.setXalign(0.50)
+        result.nameLabel.setSizeRequest(width= 120, height= 32) # setWidthChars(20) #
+        hBox.add(newLabel("")) # pre label
+        hBox.add(result.nameLabel) # to accupy the 1/3 of space
+        hBox.add(newLabel("")) # post label
+        result.vBox.add(hBox)
 
     var ac: AxeControl
     ac = newAxeControl(parent=result, parms, axe=X, rot=false, butLabels= ["Left", "StopX", "Right", "Reset"])
@@ -1433,11 +1639,11 @@ proc main(debugTextureFile="") =
 
     window.position = WindowPosition.center
 
-    let vbox = newbox(Orientation.vertical, spacing=0)
-    window.add(vbox)
-
+    let main_vBox = newBox(Orientation.vertical, spacing=0)
+    window.add(main_vBox)
+    
     let menubar = newMenubar()
-    vBox.add(menubar)
+    main_vBox.add(menubar)
 
     let addObjMi = newMenuItemWithLabel("Add obj")
 
@@ -1479,11 +1685,23 @@ proc main(debugTextureFile="") =
       let HelpMi   = newMenuItemWithLabel("Help")
       menubar.append(HelpMi)
 
-    let hbox = newbox(Orientation.horizontal, spacing=0)
-    vBox.packStart(hbox, expand=true, fill=true, padding=0)
+    #let hbox = newbox(Orientation.horizontal, spacing=0)
+    #main_vBox.packStart(hbox, expand=true, fill=true, padding=0)
 
-    let rightBox = newBox(Orientation.vertical, 0)
-    hBox.add(rightBox)
+    #let rightBox = newBox(Orientation.vertical, 0)
+    #hBox.add(rightBox)
+
+    let frameBox = newbox(Orientation.horizontal, spacing=0)
+    
+    let frameNameLab = newLabel("frames/s")
+    frameNameLab.setSizeRequest(width= 140, height=32)
+    frameBox.add(frameNameLab)
+
+    guiDat.frameValuLab = newLabel("000.0")
+    guiDat.frameValuLab.setSizeRequest(width= 140, height=32)
+    frameBox.add(guiDat.frameValuLab)
+
+    main_vBox.add(frameBox)
 
     parms.camer = newObj3D(name="camera", pos0=vec3f(0.0, 1.0, 4.0))
 
@@ -1493,15 +1711,15 @@ proc main(debugTextureFile="") =
         guiDat.obj3dCtrls[i]  = newObj3dControl(i, parms)
         parms.objToControl[i] = Obj3dNil
         objCtrlBox.add(guiDat.obj3dCtrls[i].vBox)
-    rightBox.add(objCtrlBox)
+    main_vBox.add(objCtrlBox)
 
     parms.objToControl[0] = parms.camer
 
     parms.initTreeStoreAndView()
 
-    rightBox.packStart(parms.tView, true, true, 0)
+    main_vBox.packStart(parms.tView, true, true, 0)
 
-    guiDat.glArea = newMyGLArea(parms) # newGLArea()
+    guiDat.glArea = newMyGLArea(parms)
     #vBox.add(glArea)
     #echo "type(glArea): ", type(glArea)
     #glArea.setAutoRender()
@@ -1515,20 +1733,20 @@ proc main(debugTextureFile="") =
 
     addObjMi.connect("activate", onAddObj, guiDat)
 
-    if false:
-        vBox.packStart(guiDat.glArea, expand=true, fill=true, padding=0) # hBox
-    else:
-        let openglWin = newWindow(gtk.WindowType.toplevel)
-        openglWin. title = "OpenGL Window"
-        openglWin.add(guiDat.glArea)
-        openglWin.showAll
+    let ctrlWin = newWindow(gtk.WindowType.toplevel)
+    ctrlWin. title = "Control Window"
+    let grid = parms.initButtonGrid()
+    ctrlWin.add(grid)
+    ctrlWin.showAll
 
-    #parms.obj3ds = Obj3D(); parms.sujet.name = "subject"
-    #parms.sujet.resetPos()
+
+    let openglWin = newWindow(gtk.WindowType.toplevel)
+    openglWin. title = "OpenGL Window"
+    openglWin.add(guiDat.glArea)
+    openglWin.showAll
 
     let obj3dSel = parms.objToControl[1]
     let camer    = parms.camer
-    #let dv      = parms.delta
     parms.KeyCod2NamActionObj = {
         #[
         0 : ("KbdNul"   , nil, nil, -1, 0),
@@ -1566,7 +1784,7 @@ proc main(debugTextureFile="") =
     echo "use keys 1 to 9, 0 to show/hide parts of object"
 
     let statusBar = newStatusbar()
-    vBox.add(statusBar)
+    main_vBox.add(statusBar)
 
     let mainStatusBarId = statusBar.getContextId("main")
     echo "mainStatusBarId: ", mainStatusBarId
