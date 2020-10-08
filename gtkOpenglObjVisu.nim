@@ -375,35 +375,6 @@ func getObj3d(parms: Params; no: int): Obj3d =
     if no >= 1 and parms.allObj3Ds.len >= no:
         result = parms.allObj3Ds[no-1]
 
-type
-    AxeControl = ref object of RootObj
-        # logic
-        parent        : Obj3dControl
-        axe           : Axe
-        rot           : bool
-        # GUI
-        hbox          : Box
-        buttons       : array[4, Button]
-        speedValLab   : Label
-        posValEntry   : Entry
-        posUnitLab    : Label
-
-    Obj3dControl = ref object of RootObj
-        id            : int
-        name          : string # actual display
-        pos, xyzRot   : Vec3f # actual display
-        vBox          : Box
-        nameLabel     : Label
-        linAxeCtrl    : seq[AxeControl]
-        rotAxeCtrl    : seq[AxeControl]
-
-#-------------------------------------------------------------
-
-type MyButton = ref object of Button
-  objCtrl : Obj3dControl # parent
-  axeCtrl : AxeControl # parent
-  cmd     : Cmd
-
 
 type
     AxeButton = ref object of Button
@@ -425,7 +396,6 @@ type
         pos, xyzRot  : Vec3f # actual display
         name         : string # actual display
 
-
 #-------------------------------------------------------------------------
 
 type
@@ -435,44 +405,7 @@ type
         frameValuLab: Label
         prevTime    : float
         prevFrames  : int
-        obj3dCtrls  : array[nObj3dCtrls, Obj3dControl]
         objCtrlGrids: seq[Obj3dCtrlGrid]
-
-
-proc updateDisplay(self: Obj3dControl; linAxes: openArray[Axe], rotAxes: openArray[Axe], parms:Params) =
-    let id = self.id
-    if parms.objToControls[id] == nil:
-        # echo "updateDisplay: obj3d is nil !"
-        return
-
-    let name = parms.objToControls[id].name
-    #echo "updateDisplay: obj3d: ", name
-
-    var i : int
-
-    if name != self.name:
-        echo fmt"updateDisplay: {name}"
-        self.nameLabel.setLabel(name)
-        self.name = name
-
-    var txt: string
-    for axe in linAxes:
-        i = axe.int
-        let val = parms.objToControls[id].pos[i]
-        if val != self.pos[i]:
-            txt = fmt"{val:8.3f}"
-            #echo fmt"updateDisplay: {name}: linAxe:{axe}: ", txt
-            self.linAxeCtrl[i].posValEntry.setText(txt)
-            self.pos[i] =  val
-
-    for axe in rotAxes:
-        i = axe.int
-        let val = parms.objToControls[id].xyzRot[i]
-        if val != self.xyzRot[i]:
-            txt = fmt"{val:8.3f}"
-            #echo fmt"updateDisplay: {name}: rotAxe:{axe}: ", txt
-            self.rotAxeCtrl[i].posValEntry.setText(txt)
-            self.xyzRot[i] = val
 
 
 proc updateDisplay(self: Obj3dCtrlGrid; linAxes: openArray[Axe], rotAxes: openArray[Axe], parms:Params) =
@@ -514,7 +447,6 @@ proc loadObjToControlAt(self: GuiDatas; obj3d: Obj3D, at: int) =
     echo "loadObjToControlAt: ", obj3d.name
     let parms = self.parms
     parms.objToControls[at] = obj3d
-    self.obj3dCtrls[at].updateDisplay(linAxes=allAxes, rotAxes=allAxes, parms)
     if at < self.objCtrlGrids.len :
         echo fmt"at: {at}, objCtrlGrids.len:{self.objCtrlGrids.len} "
         let ocg = self.objCtrlGrids[at]
@@ -1220,7 +1152,6 @@ proc invalidateCb(guiDat: GuiDatas): bool =
         guiDat.frameValuLab.setLabel(fmt"{fps:.1f} fps")
         guiDat.prevTime   = time
         guiDat.prevFrames = frames
-        for objCtrl in guiDat.obj3dCtrls  : objCtrl.updateDisplay(linAxes=allAxes, rotAxes=allAxes, parms)
         for objCtrl in guiDat.objCtrlGrids: objCtrl.updateDisplay(linAxes=allAxes, rotAxes=allAxes, parms)
     animationStep(parms)
     guiDat.glArea.queueRender() # queueDraw
@@ -1365,33 +1296,9 @@ proc onClick(b: Button, p:SbIdTxt) =
   echo "click " & txt
   discard sb.push(id, txt & " has been clicked")
 
-proc onClick(b: MyButton, parms: Params) =
-  var speedTxt : string
-  let obj3d = parms.objToControls[b.objCtrl.id]
-  if obj3d != nil:
-      let axe = b.axeCtrl.axe
-      let i   = axe.int
-      let rot = b.axeCtrl.rot
-      if rot:
-          echo fmt"rot around axe: {axe}, cmd: {b.cmd}"
-          obj3d.accRotCmd(b.axeCtrl.axe, b.cmd)
-          speedTxt = fmt"{obj3d.dxyzRot[i]:8.3f} rd/s"
-      else:
-          echo fmt"translate  axe: {axe}, cmd: {b.cmd}"
-          obj3d.accLinCmd(b.axeCtrl.axe, b.cmd)
-          speedTxt = fmt"{obj3d.speed[i]:8.3f} m/s"
-
-      b.axeCtrl.speedValLab.setLabel(speedTxt)
-
-  else: echo "onClick: obj3d is nil !"
-
-  #discard sb.push(id, txt & " has been clicked")
 
 proc onPosEntryActivate(self: Entry; acg:AxeCtrlGrid) =
   echo "onPosEntryActivate: ", self.getText
-
-proc onActivate(self: Entry; ac:AxeControl) =
-  echo "onActivate: ", self.getText
 
 
 proc onAddObj(mi: MenuItem, guiDat: GuiDatas) = # glArea: MyGLArea) =
@@ -1646,96 +1553,6 @@ proc newObj3dCtrlGrid*(id: int, parms: Params): Obj3dCtrlGrid =
             echo fmt"grid y:{y:2}, x:{x:2}"
 
 
-proc newAxeControl(parent:Obj3dControl; parms: Params, axe: Axe, rot=false, butLabels: openArray[string]): AxeControl =
-    result = new AxeControl
-    result.parent = parent
-    #let name = if parent.obj3d == nil: "noObj3d" else: parent.obj3d.name
-
-    let linRotStr = if rot: " rotAxe " else: " linAxe "
-    let unitStr = if rot: "rd" else: "m"
-    result.axe = axe
-    result.rot = rot
-    result.hBox = newBox(Orientation.horizontal, spacing=2)
-
-    let height = 30
-    for cmdi, label in butLabels.pairs:
-        let but: MyButton = newButton(MyButton, label)
-        but.axeCtrl = result
-        but.objCtrl = parent
-        but.cmd = (cmdi-1).Cmd
-        but.setSizeRequest(width= 52, height= height)
-        echo fmt"cmdi:{cmdi}, but.cmd:{but.cmd:4}, label:{label}"
-        but.connect("clicked", onClick, parms)
-        result.hbox.add(but)
-    if true:
-        let axeLabel = newLabel(linRotStr & $axe)
-        axeLabel.overrideBackgroundColor(state= GTK_STATE_NORMAL, color= rgba) 
-        axeLabel.setWidthChars(12) # .setSizeRequest(width= 80, height= height)
-        result.hbox.add(axeLabel)
-
-    result.speedValLab = newLabel("  0.000" & " " & unitStr & "/s")
-    result.speedValLab.overrideBackgroundColor(state= GTK_STATE_NORMAL, color= rgba) 
-    result.speedValLab.setXalign(0.99)
-    result.speedValLab.setWidthChars(16) # .setSizeRequest(width= 100, height= height)
-    result.hBox.add(result.speedValLab)
-
-    result.posValEntry = newEntry()
-    result.posValEntry.setText("0.000")
-    result.posValEntry.setAlignment(0.99)
-    result.posValEntry.setWidthChars(9) # .setSizeRequest(width= 9, height= height)
-    result.hBox.add(result.posValEntry)
-    result.posValEntry.connect("activate", onActivate, result)
-
-    result.posUnitLab  = newLabel(unitStr)
-    result.posUnitLab.setWidthChars(4) # setSizeRequest(width= 16, height= height)
-    result.hBox.add(result.posUnitLab)
-
-    parent.vBox.add(result.hBox)
-
-proc newObj3dControl(id: int, parms: Params): Obj3dControl =
-    result = new Obj3dControl
-    result.id = id
-
-    result.vBox = newBox(Orientation.vertical, spacing=0)
-
-    if true:
-        let hBox = newBox(Orientation.horizontal, spacing=0)
-        hBox.setProperty("homogeneous", true.toBoolVal) # to divide in equal spaces
-        result.nameLabel = newLabel("noObj")
-        result.nameLabel.overrideBackgroundColor(state= GTK_STATE_NORMAL, color= rgba) 
-        result.nameLabel.setXalign(0.50)
-        result.nameLabel.setSizeRequest(width= 120, height= 32) # setWidthChars(20) #
-        hBox.add(newLabel("")) # pre label
-        hBox.add(result.nameLabel) # to accupy the 1/3 of space
-        hBox.add(newLabel("")) # post label
-        result.vBox.add(hBox)
-
-    var ac: AxeControl
-    ac = newAxeControl(parent=result, parms, axe=X, rot=false, butLabels= ["Left", "StopX", "Right", "Reset"])
-    result.linAxeCtrl.add(ac)
-    #result.vBox.add(ac.hBox)
-
-    ac = newAxeControl(parent=result, parms, axe=Y, rot=false, butLabels= ["Down", "stopY", "Up"   , "Reset"])
-    result.linAxeCtrl.add(ac)
-    #result.vBox.add(ac.hBox)
-
-    ac = newAxeControl(parent=result, parms, axe=Z, rot=false, butLabels=["Back" , "StopZ", "Frwd" , "Reset"])
-    result.linAxeCtrl.add(ac)
-    #result.vBox.add(ac.hBox)
-
-    ac = newAxeControl(parent=result, parms, axe=X, rot=true , butLabels=["RotX-", "stopX", "RotX+", "Reset"])
-    result.rotAxeCtrl.add(ac)
-    #result.vBox.add(ac.hBox)
-
-    ac = newAxeControl(parent=result, parms, axe=Y, rot=true , butLabels=["RotY-", "stopY", "RotY+", "Reset"])
-    result.rotAxeCtrl.add(ac)
-    result.vBox.add(ac.hBox)
-
-    ac = newAxeControl(parent=result, parms, axe=Z, rot=true , butLabels=["RotZ-", "stopZ", "Rot+" , "Reset"])
-    result.rotAxeCtrl.add(ac)
-    #result.vBox.add(ac.hBox)
-
-
 proc main(debugTextureFile="") =
     #let parms = guiDat.parms
     let guiDat = new GuiDatas
@@ -1799,12 +1616,6 @@ proc main(debugTextureFile="") =
       let HelpMi   = newMenuItemWithLabel("Help")
       menubar.append(HelpMi)
 
-    #let hbox = newbox(Orientation.horizontal, spacing=0)
-    #main_vBox.packStart(hbox, expand=true, fill=true, padding=0)
-
-    #let rightBox = newBox(Orientation.vertical, 0)
-    #hBox.add(rightBox)
-
     let frameBox = newbox(Orientation.horizontal, spacing=0)
     
     let frameNameLab = newLabel("frames/s")
@@ -1819,13 +1630,12 @@ proc main(debugTextureFile="") =
 
     parms.camer = newObj3D(name="camera", pos0=vec3f(0.0, 1.0, 4.0))
 
-    let objCtrlBox = newBox(Orientation.vertical, spacing=0)
-    var objCtrl: Obj3dControl
     for i in 0 ..< nObj3dCtrls:
-        guiDat.obj3dCtrls[i]  = newObj3dControl(i, parms)
-        parms.objToControls[i] = Obj3dNil
-        objCtrlBox.add(guiDat.obj3dCtrls[i].vBox)
-    main_vBox.add(objCtrlBox)
+        let ocg = newObj3dCtrlGrid(i, parms)
+        #ocg.initObj3dCtrlGrid(parms)
+        main_vBox.add(ocg)
+        guiDat.objCtrlGrids.add(ocg)
+    echo "guiDat.objCtrlGrids.len: ", guiDat.objCtrlGrids.len
 
     parms.initTreeStoreAndView()
 
@@ -1841,20 +1651,6 @@ proc main(debugTextureFile="") =
     guiDat.glArea.connect("render"   , on_render, guiDat)
 
     addObjMi.connect("activate", onAddObj, guiDat)
-
-    let ctrlWin = newWindow(gtk.WindowType.toplevel)
-    ctrlWin. title = "Control Window"
-    let ctrlVbox = newBox(Orientation.vertical, spacing=0)
-    #let grid = parms.initButtonGrid(nObjCtrl= 2)
-    #ctrlWin.add(grid)
-    for i in 0 ..< nObj3dCtrls:
-        let ocg = newObj3dCtrlGrid(i, parms)
-        #ocg.initObj3dCtrlGrid(parms)
-        ctrlVbox.add(ocg)
-        guiDat.objCtrlGrids.add(ocg)
-    echo "guiDat.objCtrlGrids.len: ", guiDat.objCtrlGrids.len
-    ctrlWin.add(ctrlVbox)
-    ctrlWin.showAll
 
     guiDat.loadObjToControlAt(obj3d=parms.camer, at= 0)
     #parms.objToControls[0] = parms.camer
