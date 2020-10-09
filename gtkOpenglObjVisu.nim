@@ -15,19 +15,13 @@ import times
 import strformat
 import strutils
 from os import getEnv, joinPath, fileExists, getCurrentDir, relativePath, extractFilename
-from osproc import execCmd
 
 import glm
-#import nimgl/glfw
-from opengl as GL import nil
+#from opengl as GL import nil
 #const EGL_FLOAT = 0x1406.GLenum # cGL_FLOAT
 import nimgl/opengl # import nil # glInit
 
 import gintro/[gtk, glib, gobject, gdk] #, gio
-#import gintro/[gtk, gobject, gio]
-#echo "FileChooserAction.open :", FileChooserAction.open
-
-#import nimgl/opengl
 from nimgl/opengl as NGL import nil
 echo "GL_FRONT          :", GL_FRONT.int32.tohex
 echo "GL_FRONT_AND_BACK :", GL_FRONT_AND_BACK.int32.tohex
@@ -176,12 +170,7 @@ echo "Obj3dNil: ", Obj3dNil.type, ": ", Obj3dNil
 type
     AxeTyp = enum Lin, Rot
 
-    Axe = enum
-        noAxe = -1
-        X     =  0
-        Y     =  1
-        Z     =  2
-        XYZ   =  3
+    Axe = enum noAxe, X, Y, Z, XYZ
 
     Cmd = enum
         LESS = -1
@@ -191,12 +180,14 @@ type
 
 const allAxes: array[3, Axe] = [X, Y, Z]
 
+func toIdx(self: Axe): int = result = self.int - 1
+
 var axe = Y
 echo fmt"axe: {axe}, ", $axe
 
 proc accLinCmd(self: Obj3D; axe: Axe; cmd: Cmd) =
     echo self.name & ".accLinCmd(" & $axe & ", " & $cmd & ")"
-    let idx = axe.int
+    let idx = axe.toIdx
     if cmd == RST: # reset position
         self.pos[idx] = self.pos0[idx]
         self.chngFlgs.incl(posChngFlag[idx])
@@ -209,7 +200,7 @@ proc accLinCmd(self: Obj3D; axe: Axe; cmd: Cmd) =
 
 proc accRotCmd(self: Obj3D; axe: Axe; cmd: Cmd) =
     echo self.name & ".accRotCmd(" & $axe & ", " & $cmd & ")"
-    let idx = axe.int
+    let idx = axe.toIdx
     if cmd == RST: # reset position
         self.xyzRot[idx] = 0.0f
         self.chngFlgs.incl(rotChngFlag[idx])
@@ -251,11 +242,6 @@ proc resetPos(self: Obj3D; axe=XYZ; dummy=RST) =
 import compileShaders
 import loadTexture
 
-# +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-
-from objModels as OBJM import nil
-from objModels import `$`
-
 let t0 : float = epochTime()
 
 import tables # also exist gtk.Table: Table !
@@ -279,7 +265,6 @@ type
         obj3Ds*         : seq[Obj3D]
         tStore          : TreeStore
         tView           : TreeView
-        buttons         : seq[Button]
         valLabels       : seq[Label]
         modelFileName   : string
         debugTextureFile: string
@@ -295,7 +280,7 @@ type
         lightPos*       : Vec3f
         lightPower*     : float32
         camer*          : Obj3D
-        objToControls   : array[nObj3dCtrls, Obj3D]
+        objToControls*  : array[nObj3dCtrls, Obj3D]
         KeyCod2NamActionObj* : KeyCode2NameActionTable
 
     Params = ref ParamsObj
@@ -329,10 +314,8 @@ type
         textureLoc0      : NGL.GLint
         mesh             : Mesh
         transpose        : GLboolean
-        #frames          : int
         bg_color         : Vec3f
         bufferAttrIdList : seq[BufferParams]
-        #grps_range      : seq[OBJL.GrpRange]
 
 func `$`*(self: Params): string =
     result = fmt"Params: frames: {self.frames}"
@@ -365,12 +348,6 @@ type # for pack parameters for callbacks of connect
     parms : Params
     col   : int
 
-  Obj3RotAxeCmd = tuple
-    obj3d : Obj3D
-    rot   : bool
-    axe   : Axe
-    cmd   : Cmd
-
 func getObj3d(parms: Params; no: int): Obj3d =
     if no >= 1 and parms.allObj3Ds.len >= no:
         result = parms.allObj3Ds[no-1]
@@ -383,11 +360,11 @@ type
 
     AxeCtrlGrid* = ref object
         obj3dCtrl : Obj3dCtrlGrid # parent
-        axeTyp  : AxeTyp
-        axe     : Axe
+        axeTyp    : AxeTyp
+        axe       : Axe
         nameLab, speedlab, unitSpeedLab, unitPosLab : Label
-        buts    : seq[AxeButton]
-        posEntry: Entry
+        posEntry  : Entry
+        #buts      : seq[AxeButton]
 
     Obj3dCtrlGrid* = ref object of Grid
         id           : int
@@ -424,7 +401,7 @@ proc updateDisplay(self: Obj3dCtrlGrid; linAxes: openArray[Axe], rotAxes: openAr
 
     var txt: string
     for acg in self.axeCtrlGrids:
-        let i = acg.axe.int
+        let i = acg.axe.toIdx
         if   acg.axeTyp == Lin:
             let val = parms.objToControls[id].pos[i]
             if val != self.pos[i]:
@@ -724,7 +701,7 @@ proc textureIdOfFile(objGL: ObjsOpengl; texFile: string): GLuint =
         #if result >= 1: objGL.useTextures = true # at least one texture loaded
         objGL.textureNameToIds[texFile] = result
 
-proc addModel(objGL: ObjsOpengl; guiDat: GuiDatas) = # model: OBJM.Model) =
+proc addModel(objGL: ObjsOpengl; guiDat: GuiDatas) =
     let parms = guiDat.parms
     let modelFile = parms.modelFileName
     echo "addModel: ", modelFile.extractFilename # model.name
@@ -752,9 +729,7 @@ proc addModel(objGL: ObjsOpengl; guiDat: GuiDatas) = # model: OBJM.Model) =
         child.idx1    = rgMtl.idx1
         child.mtlName = rgMtl.mtl
 
-        #parms.obj3dSel = obj3d # select the last created
-        guiDat.loadObjToControlAt(obj3d=obj3d, at= 1)
-        #parms.objToControls[1]  = obj3d # select the last created
+        guiDat.loadObjToControlAt(obj3d=obj3d, at= 1) # select the last created
 
         if objGL.matTplLib != nil and objGL.matTplLib.mtls.contains(child.mtlName) :
             child.mtl = objGL.matTplLib.mtls[child.mtlName]
@@ -1316,24 +1291,6 @@ proc onQuitMenuActivate(mi: MenuItem, txt= "") =
   echo "onQuitMenuActivate " & txt
   mainQuit()
 
-
-proc onRemItem(widget: Button; tv: TreeView) =
-  let selection = tv.selection
-  var store = tv.getModel.treeStore #getListStore(treeView)
-  var iter: TreeIter
-  if not store.getIterFirst(iter):
-      echo "Nothing to remove !"
-      return
-  if selection.getSelected(store, iter):
-    discard store.remove(iter)
-
-proc onRemoveAll(widget: Button; tv: TreeView) =
-  var iter: TreeIter
-  let store = tv.getModel.treeStore
-  if store.getIterFirst(iter):
-    clear(store)
-  else: echo "Nothing to remove !"
-
 proc toggleBool(parms: Params; iter: TreeIter; column: int) =
     var value: Value
     parms.tStore.getValue(iter, column, value)
@@ -1436,18 +1393,6 @@ rgba.green = 0.99
 rgba.blue  = 0.80
 rgba.alpha = 1.00
 
-proc initButtonCrossGrid(parms: Params): Grid =
-    #result = newbox(Orientation.vertical  , spacing=0)
-    #result = newbox(Orientation.horizontal, spacing=0)
-    result = newGrid()
-    for p in [("Up", 1, 0), ("Left", 0, 1), ("Stop", 1, 1), ("Right", 2, 1), ("Down", 1, 2)]:
-        echo "p : ", p
-        let (label, left, top) = p
-        let but = newButton(label)
-        but.setSizeRequest(width= 48, height=32)
-        parms.buttons.add(but)
-        #result.add(but)
-        result.attach(but, left=left, top=top, width=1, height=1)
 
 proc onClick(b: AxeButton, parms: Params) =
   var speedTxt : string
@@ -1459,11 +1404,11 @@ proc onClick(b: AxeButton, parms: Params) =
       if   axeTyp == Rot:
           echo fmt"{objName}: rot around axe: {axe}, cmd: {b.cmd}"
           obj3d.accRotCmd(axe, b.cmd)
-          speedTxt = fmt"{obj3d.dxyzRot[axe.int]:8.3f}"
+          speedTxt = fmt"{obj3d.dxyzRot[axe.toIdx]:8.3f}"
       elif axeTyp == Lin:
           echo fmt"{objName}: translate  axe: {axe}, cmd: {b.cmd}"
           obj3d.accLinCmd(axe, b.cmd)
-          speedTxt = fmt"{obj3d.speed[axe.int]:8.3f}"
+          speedTxt = fmt"{obj3d.speed[axe.toIdx]:8.3f}"
 
       b.acg.speedLab.setLabel(speedTxt)
 
@@ -1492,20 +1437,15 @@ proc newObj3dCtrlGrid*(id: int, parms: Params): Obj3dCtrlGrid =
         let (axeTyp, unitLab) = linRotUnit
         for axe in allAxes:
             echo "axe: ", axe
-            let acg = new AxeCtrlGrid
-            acg.obj3dCtrl = result # parent
+            let acg = AxeCtrlGrid(obj3dCtrl: result, axeTyp: axeTyp, axe: axe)
             result.axeCtrlGrids.add(acg)
-            acg.axeTyp = axeTyp
-            acg.axe    = axe
-
             x = 0
 
             w = 2
             let axeName: string = $axe & $axeTyp 
             acg.nameLab = newLabel(axeName)
             #acg.nameLab.overrideBackgroundColor(state= GTK_STATE_NORMAL, color= rgba) 
-            result.attach(acg.nameLab, left=x, top=y, width=w, height=1)
-            x += w
+            result.attach(acg.nameLab, left=x, top=y, width=w, height=1); x += w
 
             w = 2
             for i, butLab in ["-", "0", "+", "R"].pairs:
@@ -1514,23 +1454,20 @@ proc newObj3dCtrlGrid*(id: int, parms: Params): Obj3dCtrlGrid =
                 but.cmd = (i-1).Cmd
                 but.connect("clicked", onClick, parms)
                 but.setSizeRequest(width= 24, height=32)
-                acg.buts.add(but)
+                #acg.buts.add(but)
                 but.acg = acg
-                result.attach(but, left=x, top=y, width=w, height=1)
-                x += w
+                result.attach(but, left=x, top=y, width=w, height=1); x += w
             
             w = 3 
             acg.speedLab = newLabel("-0.000")
             acg.speedLab.setXalign(0.99)
             #result.speedlab.overrideBackgroundColor(state= GTK_STATE_NORMAL, color= rgba) 
-            result.attach(acg.speedLab, left=x, top=y, width=w, height=1)
-            x += w
+            result.attach(acg.speedLab, left=x, top=y, width=w, height=1); x += w
 
             w = 2
             acg.unitSpeedLab = newLabel(unitLab & "/s")
             #acg.unitSpeedLab.overrideBackgroundColor(state= GTK_STATE_NORMAL, color= rgba) 
-            result.attach(acg.unitSpeedLab, left=x, top=y, width=w, height=1)
-            x += w
+            result.attach(acg.unitSpeedLab, left=x, top=y, width=w, height=1); x += w
 
             w = 4
             acg.posEntry = newEntry()
@@ -1540,14 +1477,12 @@ proc newObj3dCtrlGrid*(id: int, parms: Params): Obj3dCtrlGrid =
             acg.posEntry.setText("-0.000")
             acg.posEntry.setAlignment(0.99)
             acg.posEntry.connect("activate", onPosEntryActivate, acg)
-            result.attach(acg.posEntry, left=x, top=y, width=w, height=1)
-            x += w
+            result.attach(acg.posEntry, left=x, top=y, width=w, height=1); x += w
 
             w = 2
             acg.unitPosLab = newLabel(unitLab)
             #acg.unitPosLab.overrideBackgroundColor(state= GTK_STATE_NORMAL, color= rgba) 
-            result.attach(acg.unitPosLab, left=x, top=y, width=w, height=1)
-            x += w
+            result.attach(acg.unitPosLab, left=x, top=y, width=w, height=1); x += w
             
             y += 1
             echo fmt"grid y:{y:2}, x:{x:2}"
@@ -1591,8 +1526,8 @@ proc main(debugTextureFile="") =
         fileMenu.append(imprMi)
 
         let imprMenu  = gtk.newMenu()
-        imprMi.setSubmenu(imprMenu) # imprMenu.submenu = imprMi #
-        block: # # item of imprMenu
+        imprMi.setSubmenu(imprMenu)
+        block: # item of imprMenu
           let feedMi    = newMenuItemWithLabel("Import news feed...")
           imprMenu.append(feedMi)
           let bookMi    = newMenuItemWithLabel("Import bookmarks...")
@@ -1632,7 +1567,6 @@ proc main(debugTextureFile="") =
 
     for i in 0 ..< nObj3dCtrls:
         let ocg = newObj3dCtrlGrid(i, parms)
-        #ocg.initObj3dCtrlGrid(parms)
         main_vBox.add(ocg)
         guiDat.objCtrlGrids.add(ocg)
     echo "guiDat.objCtrlGrids.len: ", guiDat.objCtrlGrids.len
@@ -1653,15 +1587,12 @@ proc main(debugTextureFile="") =
     addObjMi.connect("activate", onAddObj, guiDat)
 
     guiDat.loadObjToControlAt(obj3d=parms.camer, at= 0)
-    #parms.objToControls[0] = parms.camer
 
     let openglWin = newWindow(gtk.WindowType.toplevel)
     openglWin. title = "OpenGL Window"
     openglWin.add(guiDat.glArea)
     openglWin.showAll
 
-    let obj3dSel = parms.objToControls[1]
-    let camer    = parms.camer
     parms.KeyCod2NamActionObj = {
         #[
         0 : ("KbdNul"   , nil, nil, -1, 0),
@@ -1729,4 +1660,3 @@ when isMainModule:
     main()
 
     echo fmt"End {appName}"
-
